@@ -9,38 +9,38 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------------------------
-// MediaPipe gesture model: downloaded at build time (not committed) and verified by SHA-256.
-// Source: https://ai.google.dev/edge/mediapipe/solutions/vision/gesture_recognizer
+// MediaPipe models: downloaded at build time (not committed) and verified by SHA-256.
+// https://ai.google.dev/edge/mediapipe/solutions/vision
 // ---------------------------------------------------------------------------------------------
-val gestureModelUrl =
-    "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task"
-val gestureModelSha256 = "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482"
+data class MlModel(val file: String, val url: String, val sha256: String)
+val mlModels = listOf(
+    MlModel("gesture_recognizer.task", "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task", "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482"),
+    MlModel("face_landmarker.task", "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task", "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"),
+    MlModel("selfie_multiclass_256x256.tflite", "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite", "c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0"),
+    MlModel("selfie_segmenter.tflite", "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite", "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b"),
+    MlModel("pose_landmarker_lite.task", "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task", "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a"),
+)
 val generatedAssetsDir = layout.buildDirectory.dir("generated/ultrax-assets")
 
 val downloadGestureModel by tasks.registering {
-    val outFile = generatedAssetsDir.map { it.file("gesture_recognizer.task") }
-    outputs.file(outFile)
+    val outDir = generatedAssetsDir
+    val models = mlModels.map { listOf(it.file, it.url, it.sha256) }
+    outputs.dir(outDir)
     outputs.cacheIf { true }
     doLast {
-        val target = outFile.get().asFile
         fun sha256(f: File): String {
             val md = MessageDigest.getInstance("SHA-256")
-            f.inputStream().use { ins ->
-                val buf = ByteArray(1 shl 16)
-                while (true) {
-                    val n = ins.read(buf); if (n < 0) break
-                    md.update(buf, 0, n)
-                }
-            }
+            f.inputStream().use { ins -> val buf = ByteArray(1 shl 16); while (true) { val n = ins.read(buf); if (n < 0) break; md.update(buf, 0, n) } }
             return md.digest().joinToString("") { "%02x".format(it) }
         }
-        if (target.exists() && sha256(target) == gestureModelSha256) return@doLast
-        target.parentFile.mkdirs()
-        logger.lifecycle("Downloading MediaPipe gesture model -> ${target.path}")
-        URI(gestureModelUrl).toURL().openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
-        val actual = sha256(target)
-        check(actual == gestureModelSha256) {
-            target.delete(); "gesture_recognizer.task checksum mismatch: expected $gestureModelSha256, got $actual"
+        val dir = outDir.get().asFile.also { it.mkdirs() }
+        for ((file, url, sha) in models) {
+            val target = File(dir, file)
+            if (target.exists() && sha256(target) == sha) continue
+            logger.lifecycle("Downloading MediaPipe model $file")
+            URI(url).toURL().openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+            val actual = sha256(target)
+            check(actual == sha) { target.delete(); "$file checksum mismatch: expected $sha, got $actual" }
         }
     }
 }

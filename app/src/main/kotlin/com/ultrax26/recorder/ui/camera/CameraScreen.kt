@@ -82,6 +82,7 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
     var zoomLive by remember { mutableStateOf(settings.capture.zoomRatio) }
     var showNotes by remember { mutableStateOf(false) }
     var activeControl by remember { mutableStateOf<String?>(null) }
+    var showEffects by remember { mutableStateOf(false) }
 
     LaunchedEffect(frame.zoom) { frame.zoom?.let { zoomLive = it } }
 
@@ -138,6 +139,9 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = UxColors.Green, selectedLabelColor = Color.Black, selectedLeadingIconColor = Color.Black))
             Spacer(Modifier.width(6.dp))
             AssistChip(onClick = { nav(Screen.Triggers) }, label = { Text("Gestures") }, leadingIcon = { Icon(Icons.Default.Face, null, Modifier.size(16.dp)) })
+            Spacer(Modifier.width(6.dp))
+            FilterChip(selected = settings.effects.isActive() || showEffects, onClick = { showEffects = !showEffects; if (showEffects) activeControl = null }, label = { Text("Effects") },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = UxColors.Orange, selectedLabelColor = Color.Black))
             Spacer(Modifier.weight(1f))
             session?.let { s ->
                 val hdr = if (s.hdr == com.ultrax26.recorder.settings.HdrMode.OFF) "SDR" else s.hdr.name.replace('_', '+')
@@ -234,7 +238,7 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
         else Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 150.dp)) { controls() }
 
         // ---------------- Bottom: lenses + pro controls ----------------
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 12.dp, start = 12.dp, end = if (landscape) 110.dp else 12.dp)) {
+        if (!showEffects) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 12.dp, start = 12.dp, end = if (landscape) 110.dp else 12.dp)) {
             val chars = graph.engine.characteristics
             if (activeControl != null && chars != null) {
                 ProControlPanel(graph, activeControl!!, chars, zoomLive, session?.fps ?: 30) { activeControl = null }
@@ -254,6 +258,9 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
                 }
             }
         }
+
+        // ---------------- Effects panel ----------------
+        if (showEffects) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(end = if (landscape) 100.dp else 0.dp)) { EffectsPanel(graph) { showEffects = false } }
 
         // ---------------- Toast ----------------
         message?.let { (ts, text) ->

@@ -1,5 +1,6 @@
 package com.ultrax26.recorder.settings
 
+import com.ultrax26.recorder.effects.EffectsSettings
 import com.ultrax26.recorder.triggers.DefaultRules
 import com.ultrax26.recorder.triggers.TriggerRule
 import kotlinx.serialization.Serializable
@@ -22,6 +23,7 @@ data class AppSettings(
     val storage: StorageSettings = StorageSettings(),
     val analysis: AnalysisSettings = AnalysisSettings(),
     val ui: UiSettings = UiSettings(),
+    val effects: EffectsSettings = EffectsSettings(),
 )
 
 // ------------------------------------------------------------------------------------------------

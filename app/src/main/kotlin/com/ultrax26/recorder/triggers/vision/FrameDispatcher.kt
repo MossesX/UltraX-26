@@ -3,6 +3,13 @@ package com.ultrax26.recorder.triggers.vision
 import android.graphics.Bitmap
 import android.media.Image
 import android.media.ImageReader
+import com.ultrax26.recorder.effects.BodyPoseDetector
+import com.ultrax26.recorder.effects.FaceMeshDetector
+import com.ultrax26.recorder.effects.FaceMeshResult
+import com.ultrax26.recorder.effects.MeshFaceAdapter
+import com.ultrax26.recorder.effects.PersonSegmenter
+import com.ultrax26.recorder.effects.PoseResult
+import com.ultrax26.recorder.effects.SegmentationMasks
 import com.ultrax26.recorder.settings.OverlaySettings
 import com.ultrax26.recorder.util.Clock
 import com.ultrax26.recorder.util.UxLog
@@ -25,6 +32,21 @@ class FrameDispatcher(
     private var lastFrameMs = 0L
     private var lastMpTimestamp = 0L
 
+    /** Receives effects-tracking results (implemented by the GL renderer). */
+    interface EffectsSink {
+        fun setMapping(rotationDegrees: Int, frameAspect: Float)
+        fun onFaceMesh(r: FaceMeshResult?)
+        fun onSegmentation(m: SegmentationMasks?)
+        fun onPose(p: PoseResult?)
+    }
+
+    @Volatile var effectsSink: EffectsSink? = null
+    @Volatile var faceMesh: FaceMeshDetector? = null
+    @Volatile var segmenter: PersonSegmenter? = null
+    @Volatile var poseDetector: BodyPoseDetector? = null
+    @Volatile var meshEnabled = false
+    @Volatile var segmentationEnabled = false
+    @Volatile var poseEnabled = false
     @Volatile var handDetector: HandDetector? = null
     @Volatile var faceDetector: FaceDetector? = null
     @Volatile var handsEnabled = true
@@ -73,15 +95,37 @@ class FrameDispatcher(
         var hands: List<HandObservation> = emptyList()
         var faces: List<FaceObservation> = emptyList()
         var err: String? = null
+        val sink = effectsSink
+        val uprightW = if (rot == 90 || rot == 270) h else w
+        val uprightH = if (rot == 90 || rot == 270) w else h
+        sink?.setMapping(rot, uprightW.toFloat() / uprightH)
         val hd = handDetector
         if (handsEnabled && hd != null) {
             try { hands = hd.detect(frame) } catch (t: Throwable) { err = "hands: ${t.message}" }
             handInterpreter.process(hands, nowMs)
         }
+        // Effects tracking: face mesh (also feeds the gesture interpreter so ML Kit can stay idle), segmentation, pose.
+        var meshResult: FaceMeshResult? = null
+        val fm = faceMesh
+        if (meshEnabled && fm != null && sink != null) {
+            try { meshResult = fm.detect(frame) } catch (t: Throwable) { err = "mesh: ${t.message}" }
+            sink.onFaceMesh(meshResult)
+        }
+        val sg = segmenter
+        if (segmentationEnabled && sg != null && sink != null) {
+            try { sink.onSegmentation(sg.segment(frame)) } catch (t: Throwable) { err = "segmentation: ${t.message}" }
+        }
+        val pd = poseDetector
+        if (poseEnabled && pd != null && sink != null) {
+            try { sink.onPose(pd.detect(frame)) } catch (t: Throwable) { err = "pose: ${t.message}" }
+        }
         val fd = faceDetector
-        if (facesEnabled && fd != null) {
-            try { faces = fd.detect(frame) } catch (t: Throwable) { err = "faces: ${t.message}" }
-            faceInterpreter.process(faces, nowMs)
+        if (facesEnabled) {
+            if (meshResult != null) { faces = listOf(MeshFaceAdapter.toObservation(meshResult)); faceInterpreter.process(faces, nowMs) }
+            else if (fd != null) {
+                try { faces = fd.detect(frame) } catch (t: Throwable) { err = "faces: ${t.message}" }
+                faceInterpreter.process(faces, nowMs)
+            }
         }
         if (++frameCounter % scopesEveryNth == 0) {
             try { scopes.analyze(converter.pixels, w, h, overlays) } catch (t: Throwable) { UxLog.w(tag, "scopes: ${t.message}") }
@@ -95,14 +139,18 @@ class FrameDispatcher(
             heldGesture = handInterpreter.currentLabel, heldMs = handInterpreter.currentHeldMs,
             blinkCount = faceInterpreter.blinkCount, fingerCount = handInterpreter.currentFingers,
             frameWidth = if (upright) h else w, frameHeight = if (upright) w else h,
-            handsAvailable = hd != null, facesAvailable = fd != null, lastError = err,
+            handsAvailable = hd != null, facesAvailable = fd != null || (meshEnabled && fm != null), lastError = err,
+            meshTracked = meshResult != null,
         )
     }
 
     fun close() {
         try { handDetector?.close() } catch (_: Throwable) { }
         try { faceDetector?.close() } catch (_: Throwable) { }
-        handDetector = null; faceDetector = null
+        try { faceMesh?.close() } catch (_: Throwable) { }
+        try { segmenter?.close() } catch (_: Throwable) { }
+        try { poseDetector?.close() } catch (_: Throwable) { }
+        handDetector = null; faceDetector = null; faceMesh = null; segmenter = null; poseDetector = null
         bitmap?.recycle(); bitmap = null
     }
 }

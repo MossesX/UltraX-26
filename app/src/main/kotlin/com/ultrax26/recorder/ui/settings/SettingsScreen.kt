@@ -40,8 +40,8 @@ fun SettingsHeader(title: String, onBack: () -> Unit, actions: @Composable RowSc
 @Composable
 fun SettingsScreen(graph: AppGraph, initialTab: Int, onBack: () -> Unit, nav: (Screen) -> Unit) {
     val settings by graph.settings.settings.collectAsStateWithLifecycle()
-    var tab by remember { mutableStateOf(initialTab.coerceIn(0, 7)) }
-    val tabs = listOf("Video", "Audio", "Camera", "Overlays", "Storage", "Presets", "Diagnostics", "About")
+    var tab by remember { mutableStateOf(initialTab.coerceIn(0, 8)) }
+    val tabs = listOf("Video", "Audio", "Camera", "Overlays", "Storage", "Presets", "Diagnostics", "Effects", "About")
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         SettingsHeader("Settings", onBack)
         ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
@@ -56,6 +56,7 @@ fun SettingsScreen(graph: AppGraph, initialTab: Int, onBack: () -> Unit, nav: (S
                 4 -> StorageTab(graph, settings)
                 5 -> PresetsTab(graph, settings)
                 6 -> DiagnosticsTab(graph, nav)
+                7 -> EffectsTab(graph, settings)
                 else -> AboutTab()
             }
         }
@@ -409,6 +410,26 @@ private fun DiagnosticsTab(graph: AppGraph, nav: (Screen) -> Unit) {
     }
     SectionCard("Device report", "Every camera characteristic, encoder and audio input this phone exposes") {
         Button(onClick = { nav(Screen.Diagnostics) }) { Text("Generate report") }
+    }
+}
+
+@Composable
+private fun EffectsTab(graph: AppGraph, s: AppSettings) {
+    fun upd(f: (com.ultrax26.recorder.effects.EffectsSettings) -> com.ultrax26.recorder.effects.EffectsSettings) = graph.settings.update { it.copy(effects = f(it.effects)) }
+    val fx = s.effects
+    SectionCard("Effects pipeline", "The GL compositor sits between the camera and the encoder while any effect is active") {
+        PickerRow("Render resolution", com.ultrax26.recorder.effects.RenderRes.entries.map { it to it.label }, fx.renderRes, "Recording is capped at this size while effects are on; HDR records as SDR") { upd { x -> x.copy(renderRes = it) } }
+        SwitchRow("Keep pipeline on even with no effect", fx.forcePipeline, "Lets you toggle effects instantly mid-recording; costs battery") { upd { x -> x.copy(forcePipeline = it) } }
+        SwitchRow("Head-tracked parallax on backgrounds", fx.headParallax) { upd { x -> x.copy(headParallax = it) } }
+        SwitchRow("Multi-class segmentation (hair / face / clothes)", fx.useMultiClassSegmenter, "Needed for gray hair in the age looks; slower than the single-class model") { upd { x -> x.copy(useMultiClassSegmenter = it) } }
+        SwitchRow("Body pose tracking for costume pieces", fx.poseTracking, "Off: shoulders/chest are estimated from the face") { upd { x -> x.copy(poseTracking = it) } }
+    }
+    SectionCard("Troubleshooting", "If stickers or masks appear flipped or offset on your phone, toggle these") {
+        SwitchRow("Show face mask overlay", fx.debugMesh) { upd { x -> x.copy(debugMesh = it) } }
+        SwitchRow("Flip camera texture vertically", fx.flipCameraY) { upd { x -> x.copy(flipCameraY = it) } }
+        SwitchRow("Flip segmentation mask vertically", fx.flipMaskY) { upd { x -> x.copy(flipMaskY = it) } }
+        SwitchRow("Invert head yaw for 3D stickers", fx.invertYaw) { upd { x -> x.copy(invertYaw = it) } }
+        SwitchRow("Invert head pitch for 3D stickers", fx.invertPitch) { upd { x -> x.copy(invertPitch = it) } }
     }
 }
 

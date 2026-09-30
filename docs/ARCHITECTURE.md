@@ -33,6 +33,13 @@ app/src/main/kotlin/com/ultrax26/recorder/
 │   ├─ vision/                       YuvToRgb, FrameDispatcher, Hand/FaceGestureInterpreter, ScopesAnalyzer,
 │   │                                MediaPipeHandDetector, MlKitFaceDetector
 │   └─ device/                       volume keys, MediaSession buttons, shake, proximity
+├─ effects/
+│   ├─ EffectsModel.kt / EffectCatalog.kt   settings (stickers, background, beauty, face/age/fun/look) + built-in catalog & looks
+│   ├─ FaceGeometry.kt / MeshTypes.kt       scene mapping, face frame & head rotation, sticker projection, detector interfaces
+│   ├─ EffectsRenderer.kt                   GL thread: camera SurfaceTexture → composite/face/style/sticker passes → preview + encoder
+│   ├─ BackgroundSources.kt / StickerTextures.kt   photo/video/parallax backgrounds, drawable & PNG textures
+│   ├─ gl/ (EglCore, GlUtil, Shaders)       EGL context, programs/FBOs/quads, GLSL sources
+│   └─ ml/MediaPipeEffects.kt               Face Landmarker, Image Segmenter, Pose Landmarker adapters
 ├─ feedback/Feedback.kt              haptics, tones, TTS, screen flash
 ├─ diagnostics/CameraReport.kt       shareable device report
 └─ ui/                               Compose: MainActivity (nav, permissions), camera screen + overlays,

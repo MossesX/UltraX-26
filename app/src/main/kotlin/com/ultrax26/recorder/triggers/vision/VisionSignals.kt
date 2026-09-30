@@ -73,4 +73,5 @@ data class VisionHudState(
     val handsAvailable: Boolean = false,
     val facesAvailable: Boolean = false,
     val lastError: String? = null,
+    val meshTracked: Boolean = false,
 )

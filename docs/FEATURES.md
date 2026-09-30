@@ -58,6 +58,19 @@ pro strip). Anything else — including every **Samsung vendor tag** the HAL lis
 | Voice (trained keyword spotter) | MFCC + DTW on the recording's PCM | 🧪 enroll 3–5 samples/phrase |
 | Volume keys, Bluetooth buttons, shake, proximity wave, timer | platform | ✅ |
 
+## Effects
+| Feature | Status |
+| --- | --- |
+| GL compositor between camera and encoder (preview + recording) | ✅ |
+| Person segmentation backgrounds: blur, color, animated GLSL, photo, video, 3D parallax | ✅ |
+| Face-anchored stickers (2D / 3D head pose), body-anchored costume pieces, behind-person layers | ✅ 🧪 |
+| 72 built-in stickers, 46 looks, import PNG stickers | ✅ |
+| Beauty: smoothing, eyes, slim, nose, chin, teeth, lipstick, blush, glow, sharpen | ✅ 🧪 |
+| Face modes (alien, zombie, robot, clown, ghost, vampire, gold, stone…) | 🧪 |
+| Age looks (older / much older / younger / baby) — stylized, not a learned model | 🧪 |
+| Fun distortions & stylizations, color looks, vignette, grain | ✅ |
+| Effects with HDR / 8K / high-speed | ⛔ by design (SDR, capped at the render resolution, not in high-speed) |
+
 ## Monitoring overlays
 Grids, aspect guides, safe areas, level, histogram, waveform, zebra, focus peaking, false color,
 audio meter, timecode, gesture HUD, exposure info, thermal & storage chips — all ✅.

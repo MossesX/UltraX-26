@@ -79,6 +79,7 @@ class AppGraph(val app: Application) {
     }
 
     private fun onSettings(s: AppSettings) {
+        if (foreground.value) ensureDetectors(s)
         triggers.updateSettings(s.triggers)
         feedback.config = s.triggers.feedback
         if (foreground.value) ensureAudioCapture(s)
@@ -175,16 +176,33 @@ class AppGraph(val app: Application) {
 
     private var detectorsThread: Thread? = null
 
+    private var segmenterKey: String? = null
+
     /** MediaPipe/ML Kit init takes a moment; do it off the main thread. */
     fun ensureDetectors(s: AppSettings) {
+        val fx = s.effects
+        val pipeline = fx.needsPipeline()
+        dispatcher.meshEnabled = pipeline && fx.needsFaceMesh()
+        dispatcher.segmentationEnabled = pipeline && fx.needsSegmentation()
+        dispatcher.poseEnabled = pipeline && fx.needsPose()
+        val wantSegKey = if (dispatcher.segmentationEnabled) "seg:${fx.useMultiClassSegmenter}" else null
         if (detectorsThread?.isAlive == true) return
-        if (dispatcher.handDetector != null && dispatcher.faceDetector != null) return
+        val needHands = s.triggers.hand.enabled && dispatcher.handDetector == null
+        val needFaces = s.triggers.face.enabled && dispatcher.faceDetector == null
+        val needMesh = dispatcher.meshEnabled && dispatcher.faceMesh == null
+        val needSeg = dispatcher.segmentationEnabled && (dispatcher.segmenter == null || segmenterKey != wantSegKey)
+        val needPose = dispatcher.poseEnabled && dispatcher.poseDetector == null
+        if (!needHands && !needFaces && !needMesh && !needSeg && !needPose) return
         detectorsThread = Thread({
+            val delegate = s.triggers.hand.delegate
+            try { if (needMesh) dispatcher.faceMesh = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.faceMesh(app, delegate) } catch (t: Throwable) { UxLog.e(tag, "face mesh init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Face mesh failed: ${t.message}") }
+            try { if (needSeg) { dispatcher.segmenter?.close(); dispatcher.segmenter = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.segmenter(app, fx.useMultiClassSegmenter, delegate); segmenterKey = wantSegKey } } catch (t: Throwable) { UxLog.e(tag, "segmenter init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Segmenter failed: ${t.message}") }
+            try { if (needPose) dispatcher.poseDetector = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.pose(app, delegate) } catch (t: Throwable) { UxLog.e(tag, "pose init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Pose failed: ${t.message}") }
             try {
-                if (dispatcher.handDetector == null && s.triggers.hand.enabled) dispatcher.handDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.hand(app, s.triggers.hand)
+                if (needHands) dispatcher.handDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.hand(app, s.triggers.hand)
             } catch (t: Throwable) { UxLog.e(tag, "MediaPipe init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Hand model failed: ${t.message}") }
             try {
-                if (dispatcher.faceDetector == null && s.triggers.face.enabled) dispatcher.faceDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.face(s.triggers.face)
+                if (needFaces) dispatcher.faceDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.face(s.triggers.face)
             } catch (t: Throwable) { UxLog.e(tag, "ML Kit init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Face model failed: ${t.message}") }
         }, "ux-ml-init").also { it.start() }
     }

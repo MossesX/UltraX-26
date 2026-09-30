@@ -15,6 +15,7 @@ import com.ultrax26.recorder.camera.CameraInfo
 import com.ultrax26.recorder.camera.Capabilities
 import com.ultrax26.recorder.camera.SessionPlan
 import com.ultrax26.recorder.camera.ThermalMonitor
+import com.ultrax26.recorder.effects.EffectsRenderer
 import com.ultrax26.recorder.feedback.Feedback
 import com.ultrax26.recorder.settings.AppSettings
 import com.ultrax26.recorder.settings.GestureCameraSource
@@ -55,6 +56,7 @@ data class SessionInfo(
     val notes: List<String>,
     val lensPresets: List<Float>,
     val physicalLenses: List<CameraInfo>,
+    val effectsActive: Boolean = false,
 )
 
 @Serializable
@@ -122,6 +124,8 @@ class RecordingController(
     private var pausedAtBootMs = 0L
     private var currentSessionKey: String? = null
     private var gestureEngine: CameraEngine? = null
+    private var renderer: EffectsRenderer? = null
+    val rendererState = MutableStateFlow<EffectsRenderer?>(null)
     private var sessionSettings: AppSettings? = null
     private var currentInfo: SessionInfo? = null
     private var triggerLog = ArrayList<String>()
@@ -168,6 +172,7 @@ class RecordingController(
             engine.updateCapture(s.capture)
             sessionSettings = s
         }
+        renderer?.updateSettings(s.effects)
         dispatcher.overlays = s.overlays
         dispatcher.targetFps = s.analysis.targetFps
         dispatcher.handsEnabled = s.triggers.hand.enabled
@@ -189,6 +194,7 @@ class RecordingController(
         s.video.bitrateMode, s.video.bitrateMbps, s.video.cqQuality, s.video.iFrameIntervalSec, s.video.maxBFrames, s.video.hdr, s.video.fullRange,
         s.video.timelapseFactor, s.video.mirrorFrontCamera, s.video.preRollSeconds,
         s.audio, s.analysis, s.triggers.gestureCamera, s.triggers.hand.enabled, s.triggers.face.enabled, previewSize,
+        s.effects.needsPipeline(), s.effects.renderRes,
     ).joinToString("|")
 
     // ------------------------------------------------------------------------------------------
@@ -198,6 +204,8 @@ class RecordingController(
     private fun teardownSession() {
         engine.analysisListener = null
         engine.close()
+        renderer?.let { r -> dispatcher.effectsSink = null; try { r.stop() } catch (t: Throwable) { UxLog.w(tag, "renderer stop: ${t.message}") } }
+        renderer = null; rendererState.value = null
         gestureEngine?.shutdown(); gestureEngine = null
         videoEncoder?.release(); videoEncoder = null
         audioEncoder?.let { enc -> attachedCapture?.removeListener(enc); enc.release() }; audioEncoder = null
@@ -265,6 +273,19 @@ class RecordingController(
         if (hdr != HdrMode.OFF && profile == DynamicRangeProfiles.STANDARD) { notes += "${hdr.label} not offered by this camera; recording SDR"; hdr = HdrMode.OFF }
         if (highSpeed && hdr != HdrMode.OFF) { notes += "HDR not available in high-speed mode"; hdr = HdrMode.OFF; profile = DynamicRangeProfiles.STANDARD }
 
+        // --- effects pipeline (GL compositor between camera and encoder) ---
+        val fx = s.effects.needsPipeline() && !highSpeed
+        if (s.effects.needsPipeline() && highSpeed) notes += "Effects are unavailable in high-speed mode"
+        if (fx) {
+            if (hdr != HdrMode.OFF) { notes += "HDR is recorded as SDR while effects are active"; hdr = HdrMode.OFF; profile = DynamicRangeProfiles.STANDARD }
+            val cap = s.effects.renderRes.maxWidth
+            if (cap > 0 && size.width > cap) {
+                val aspect = size.width.toFloat() / size.height
+                val alt = Capabilities.videoSizes(chars).filter { abs(it.width.toFloat() / it.height - aspect) < 0.02f && it.width <= cap }.maxByOrNull { it.width }
+                if (alt != null) { notes += "Effects render resolution caps recording at ${alt.width}×${alt.height}"; size = alt; fps = minOf(fps, Capabilities.maxFpsFor(chars, size)) }
+            }
+        }
+
         // --- encoder ---
         var codec = s.video.codec
         var enc = EncoderCapabilities.best(codec, size.width, size.height, s.video.encoderName)
@@ -295,6 +316,24 @@ class RecordingController(
         venc.start()
         videoEncoder = venc
 
+        var fxRenderer: EffectsRenderer? = null
+        if (fx) {
+            try {
+                val r = EffectsRenderer(context) { settingsStore.current.effects }
+                r.start(size.width, size.height)
+                if (r.inputSurface == null) throw IllegalStateException(r.stats.value.error ?: "no GL input surface")
+                r.setPreviewSurface(surface)
+                r.setEncoderSurface(venc.inputSurface)
+                r.setCameraFacing(front, mirrorPreview = front, mirrorRecording = front && s.video.mirrorFrontCamera)
+                r.updateSettings(s.effects)
+                dispatcher.effectsSink = r
+                renderer = r; rendererState.value = r; fxRenderer = r
+            } catch (t: Throwable) {
+                UxLog.e(tag, "effects renderer failed; recording without effects", t)
+                notes += "Effects pipeline failed to start (${t.message}); recording without effects"
+            }
+        }
+
         // --- audio (shared capture owned by the app graph) ---
         var audioOk = false
         val cap = audioCaptureProvider()
@@ -309,7 +348,7 @@ class RecordingController(
         } else if (highSpeed && s.video.slowMotionPlaybackFps != null) notes += "Slow-motion clips are muxed without audio"
 
         // --- analysis / gestures ---
-        val wantsAnalysis = s.analysis.enabled && (s.triggers.hand.enabled || s.triggers.face.enabled || s.overlays.histogram || s.overlays.zebra || s.overlays.focusPeaking || s.overlays.falseColor || s.overlays.waveform)
+        val wantsAnalysis = s.analysis.enabled && (s.triggers.hand.enabled || s.triggers.face.enabled || s.overlays.histogram || s.overlays.zebra || s.overlays.focusPeaking || s.overlays.falseColor || s.overlays.waveform || fxRenderer != null)
         val gestureCam = s.triggers.gestureCamera
         val separateGestureCamera = wantsAnalysis && gestureCam != GestureCameraSource.SAME && !highSpeed
         val analysisPlan = if (wantsAnalysis && !separateGestureCamera && !highSpeed) AnalysisPlan(Size(s.analysis.width, s.analysis.height), s.analysis.targetFps, s.analysis.preferP010WhenHdr) else null
@@ -328,17 +367,19 @@ class RecordingController(
         engine.analysisListener = if (analysisPlan != null) dispatcher else null
 
         val plan = SessionPlan(
-            cameraId = cameraId, physicalCameraId = physical, previewSurface = surface, previewSize = previewSize,
-            encoderSurface = venc.inputSurface, recordSize = size, fps = fps, highSpeed = highSpeed, analysis = analysisPlan,
+            cameraId = cameraId, physicalCameraId = physical,
+            previewSurface = fxRenderer?.inputSurface ?: surface, previewSize = if (fxRenderer != null) size else previewSize,
+            encoderSurface = if (fxRenderer != null) null else venc.inputSurface,
+            recordSize = size, fps = fps, highSpeed = highSpeed, analysis = analysisPlan,
             dynamicRangeProfile = profile, capture = s.capture, timelapseFactor = if (s.video.intervalCaptureMs > 0) 1 else s.video.timelapseFactor.coerceIn(1, 120),
-            mirrorRecording = front && s.video.mirrorFrontCamera, sessionParameters = s.capture.sessionParameters,
+            mirrorRecording = fxRenderer == null && front && s.video.mirrorFrontCamera, sessionParameters = s.capture.sessionParameters,
         )
         engine.open(plan)
 
         if (separateGestureCamera) openGestureCamera(s, cameraId, front, notes)
 
         val presets = lensPresets(info, chars)
-        currentInfo = SessionInfo(cameraId, info, size, fps, highSpeed, codec, encoder.name, bitrate, hdr, audioOk, analysisPlan != null || separateGestureCamera, notes, presets, if (info != null) catalog.physicalInfos(cameraId) else emptyList())
+        currentInfo = SessionInfo(cameraId, info, size, fps, highSpeed, codec, encoder.name, bitrate, hdr, audioOk, analysisPlan != null || separateGestureCamera, notes, presets, if (info != null) catalog.physicalInfos(cameraId) else emptyList(), fxRenderer != null)
         sessionInfo.value = currentInfo
         notes.forEach { UxLog.i(tag, "note: $it") }
         updatePreRollArming()
@@ -386,11 +427,11 @@ class RecordingController(
         preRollActive = want
         armedForPreRoll.value = want
         if (want) {
-            engine.setRecordingTarget(true)
+            engine.setRecordingTarget(true); renderer?.setRecording(true)
             videoEncoder?.requestKeyFrame()
             audioEncoder?.enabled = true
         } else if (state.value == RecState.IDLE) {
-            engine.setRecordingTarget(false)
+            engine.setRecordingTarget(false); renderer?.setRecording(false)
             audioEncoder?.enabled = false
             preRoll.clear()
             preRollBuffered.value = 0f
@@ -469,6 +510,7 @@ class RecordingController(
         if (thermal.state.value.criticalOrWorse && s.video.stopOnThermalCritical) { toast("Device too hot to record"); return }
 
         val timeScale = when {
+            renderer != null -> 1.0   // the GL pipeline renders every frame; time-lapse decimation is direct-path only
             info.highSpeed && s.video.slowMotionPlaybackFps != null -> info.fps.toDouble() / s.video.slowMotionPlaybackFps.coerceAtLeast(1)
             s.video.intervalCaptureMs > 0 -> (1_000_000.0 / info.fps) / (s.video.intervalCaptureMs * 1000.0)
             s.video.timelapseFactor > 1 -> 1.0 / s.video.timelapseFactor
@@ -503,10 +545,10 @@ class RecordingController(
             preRollActive = false
             armedForPreRoll.value = false
         }
-        engine.setRecordingTarget(true)
+        engine.setRecordingTarget(true); renderer?.setRecording(true)
         venc.requestKeyFrame()
         audioEncoder?.enabled = true
-        if (s.video.intervalCaptureMs > 0) scheduleInterval(s.video.intervalCaptureMs)
+        if (s.video.intervalCaptureMs > 0 && renderer == null) scheduleInterval(s.video.intervalCaptureMs)
         RecordingService.start(context)
         feedback.recordingStarted()
         UxLog.i(tag, "recording started ${info.recordSize}@${info.fps} ${info.codec} ${info.hdr}")
@@ -558,7 +600,7 @@ class RecordingController(
         if (state.value == RecState.FINALIZING) return
         state.value = RecState.FINALIZING
         intervalRunnable?.let { ctrl.handler.removeCallbacks(it) }; intervalRunnable = null
-        engine.setRecordingTarget(false)
+        engine.setRecordingTarget(false); renderer?.setRecording(false)
         audioEncoder?.enabled = false
         // Let the last frames drain, then finalize.
         ctrl.postDelayed(350) {
