@@ -71,6 +71,20 @@ pro strip). Anything else — including every **Samsung vendor tag** the HAL lis
 | Fun distortions & stylizations, color looks, vignette, grain | ✅ |
 | Effects with HDR / 8K / high-speed | ⛔ by design (SDR, capped at the render resolution, not in high-speed) |
 
+## Video calls
+| Feature | Status |
+| --- | --- |
+| Share-a-link calls; guests join in any browser (no app / account) | ✅ |
+| Personal address (`ux-name`), phone↔phone calls, ring + Answer/Decline, voice “answer” / “hang up” | ✅ |
+| Group calls (mesh, host-distributed roster), text chat relayed to everyone | ✅ 🧪 |
+| Effects / virtual backgrounds in the outgoing call video (renderer is the WebRTC source) | ✅ |
+| Record with the full pipeline while in a call | ✅ |
+| Mute, camera off, speaker/earpiece, send resolution / fps / bitrate caps, participant cap | ✅ |
+| QR code, Share / SMS / Copy invite; links open the app directly on phones that have it | ✅ |
+| Public defaults (PeerJS Cloud, Google STUN, Open Relay TURN) + self-host bundle in `server/` | ✅ |
+| Browser client on GitHub Pages (`web/call/`), also hosts calls itself | ✅ |
+| Screen sharing, call recording of remote participants, SFU for large rooms | ⛔ not yet |
+
 ## Monitoring overlays
 Grids, aspect guides, safe areas, level, histogram, waveform, zebra, focus peaking, false color,
 audio meter, timecode, gesture HUD, exposure info, thermal & storage chips — all ✅.

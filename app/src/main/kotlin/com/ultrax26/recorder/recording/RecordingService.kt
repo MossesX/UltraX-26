@@ -23,14 +23,25 @@ class RecordingService : Service() {
         const val ACTION_PAUSE = "com.ultrax26.recorder.action.PAUSE"
         const val ACTION_RESUME = "com.ultrax26.recorder.action.RESUME"
         private const val EXTRA_PAUSED = "paused"
+        private const val EXTRA_CALL = "call"
+        @Volatile private var callActive = false
+        @Volatile private var recordingActive = false
+
+        fun startCall(ctx: Context) { callActive = true; try { ctx.startForegroundService(Intent(ctx, RecordingService::class.java).putExtra(EXTRA_CALL, true)) } catch (_: Throwable) { } }
+        fun stopCall(ctx: Context) { callActive = false; if (!recordingActive) stop(ctx) else update(ctx, paused = false) }
 
         fun start(ctx: Context) {
+            recordingActive = true
             try { ctx.startForegroundService(Intent(ctx, RecordingService::class.java)) } catch (_: Throwable) { }
         }
         fun update(ctx: Context, paused: Boolean) {
             try { ctx.startService(Intent(ctx, RecordingService::class.java).putExtra(EXTRA_PAUSED, paused)) } catch (_: Throwable) { }
         }
-        fun stop(ctx: Context) { try { ctx.stopService(Intent(ctx, RecordingService::class.java)) } catch (_: Throwable) { } }
+        fun stop(ctx: Context) {
+            recordingActive = false
+            if (callActive) { update(ctx, paused = false); return }
+            try { ctx.stopService(Intent(ctx, RecordingService::class.java)) } catch (_: Throwable) { }
+        }
 
         fun ensureChannel(ctx: Context) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -45,7 +56,7 @@ class RecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel(this)
         val paused = intent?.getBooleanExtra(EXTRA_PAUSED, false) ?: false
-        val n = buildNotification(paused)
+        val n = buildNotification(paused, callActive && !recordingActive)
         startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         return START_NOT_STICKY
     }
@@ -55,18 +66,20 @@ class RecordingService : Service() {
         return Notification.Action.Builder(null, label, pi).build()
     }
 
-    private fun buildNotification(paused: Boolean): Notification {
+    private fun buildNotification(paused: Boolean, callOnly: Boolean = false): Notification {
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         val content = if (launch != null) PendingIntent.getActivity(this, 0, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) else null
         val b = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.notification_recording_title))
-            .setContentText(if (paused) "Paused" else "Recording — gestures & voice armed")
+            .setContentTitle(if (callOnly) "UltraX 26 video call" else getString(R.string.notification_recording_title))
+            .setContentText(if (callOnly) "In a call — tap to return" else if (paused) "Paused" else "Recording — gestures & voice armed")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(action(ACTION_STOP, getString(R.string.notification_action_stop), 1))
-            .addAction(if (paused) action(ACTION_RESUME, getString(R.string.notification_action_resume), 3) else action(ACTION_PAUSE, getString(R.string.notification_action_pause), 2))
+        if (!callOnly) {
+            b.addAction(action(ACTION_STOP, getString(R.string.notification_action_stop), 1))
+            b.addAction(if (paused) action(ACTION_RESUME, getString(R.string.notification_action_resume), 3) else action(ACTION_PAUSE, getString(R.string.notification_action_pause), 2))
+        }
         if (content != null) b.setContentIntent(content)
         return b.build()
     }

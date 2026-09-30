@@ -1,5 +1,6 @@
 package com.ultrax26.recorder.settings
 
+import com.ultrax26.recorder.calls.CallSettings
 import com.ultrax26.recorder.effects.EffectsSettings
 import com.ultrax26.recorder.triggers.DefaultRules
 import com.ultrax26.recorder.triggers.TriggerRule
@@ -24,6 +25,7 @@ data class AppSettings(
     val analysis: AnalysisSettings = AnalysisSettings(),
     val ui: UiSettings = UiSettings(),
     val effects: EffectsSettings = EffectsSettings(),
+    val calls: CallSettings = CallSettings(),
 )
 
 // ------------------------------------------------------------------------------------------------

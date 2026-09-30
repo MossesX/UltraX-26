@@ -14,3 +14,12 @@
 -keep,includedescriptorclasses class com.ultrax26.recorder.**$$serializer { *; }
 -keepclassmembers class com.ultrax26.recorder.** { *** Companion; }
 -keepclasseswithmembers class com.ultrax26.recorder.** { kotlinx.serialization.KSerializer serializer(...); }
+# WebRTC (JNI)
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
+# OkHttp / Okio
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**

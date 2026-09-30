@@ -126,6 +126,19 @@ class RecordingController(
     private var gestureEngine: CameraEngine? = null
     private var renderer: EffectsRenderer? = null
     val rendererState = MutableStateFlow<EffectsRenderer?>(null)
+    @Volatile private var callActive = false
+    /** Video-call actions routed from triggers (set by the app graph). */
+    @Volatile var callActions: CallActions? = null
+
+    interface CallActions { fun answer(); fun hangUp(); fun toggleMic() }
+
+    /** A video call needs the GL pipeline as its video source; rebuild the session when this flips. */
+    fun setCallActive(active: Boolean) = ctrl.post {
+        if (callActive == active) return@post
+        callActive = active
+        if (state.value == RecState.RECORDING || state.value == RecState.PAUSED) { toast("Call video starts after this clip"); return@post }
+        rebuildInternal(force = true)
+    }
     private var sessionSettings: AppSettings? = null
     private var currentInfo: SessionInfo? = null
     private var triggerLog = ArrayList<String>()
@@ -173,6 +186,7 @@ class RecordingController(
             sessionSettings = s
         }
         renderer?.updateSettings(s.effects)
+        renderer?.callRawCamera = !s.calls.effectsInCalls
         dispatcher.overlays = s.overlays
         dispatcher.targetFps = s.analysis.targetFps
         dispatcher.handsEnabled = s.triggers.hand.enabled
@@ -194,7 +208,7 @@ class RecordingController(
         s.video.bitrateMode, s.video.bitrateMbps, s.video.cqQuality, s.video.iFrameIntervalSec, s.video.maxBFrames, s.video.hdr, s.video.fullRange,
         s.video.timelapseFactor, s.video.mirrorFrontCamera, s.video.preRollSeconds,
         s.audio, s.analysis, s.triggers.gestureCamera, s.triggers.hand.enabled, s.triggers.face.enabled, previewSize,
-        s.effects.needsPipeline(), s.effects.renderRes,
+        s.effects.needsPipeline(), s.effects.renderRes, callActive,
     ).joinToString("|")
 
     // ------------------------------------------------------------------------------------------
@@ -274,7 +288,7 @@ class RecordingController(
         if (highSpeed && hdr != HdrMode.OFF) { notes += "HDR not available in high-speed mode"; hdr = HdrMode.OFF; profile = DynamicRangeProfiles.STANDARD }
 
         // --- effects pipeline (GL compositor between camera and encoder) ---
-        val fx = s.effects.needsPipeline() && !highSpeed
+        val fx = (s.effects.needsPipeline() || callActive) && !highSpeed
         if (s.effects.needsPipeline() && highSpeed) notes += "Effects are unavailable in high-speed mode"
         if (fx) {
             if (hdr != HdrMode.OFF) { notes += "HDR is recorded as SDR while effects are active"; hdr = HdrMode.OFF; profile = DynamicRangeProfiles.STANDARD }
@@ -326,6 +340,7 @@ class RecordingController(
                 r.setEncoderSurface(venc.inputSurface)
                 r.setCameraFacing(front, mirrorPreview = front, mirrorRecording = front && s.video.mirrorFrontCamera)
                 r.updateSettings(s.effects)
+                r.callRawCamera = !s.calls.effectsInCalls
                 dispatcher.effectsSink = r
                 renderer = r; rendererState.value = r; fxRenderer = r
             } catch (t: Throwable) {
@@ -480,6 +495,9 @@ class RecordingController(
             RecAction.TOGGLE_TORCH -> { torchOn = !torchOn; engine.setTorch(torchOn) }
             RecAction.TOGGLE_AE_LOCK -> { aeLocked = !aeLocked; engine.lockAe(aeLocked) }
             RecAction.TOGGLE_AF_LOCK -> { afLocked = !afLocked; engine.lockAf(afLocked) }
+            RecAction.ANSWER_CALL -> callActions?.answer()
+            RecAction.HANG_UP -> callActions?.hangUp()
+            RecAction.TOGGLE_CALL_MIC -> callActions?.toggleMic()
         }
         if (rule != null) triggerLog += "${Clock.wallMs()} ${rule.displayName}"
     }

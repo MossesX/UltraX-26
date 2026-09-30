@@ -152,6 +152,11 @@ dependencies {
     implementation(libs.mediapipe.tasks.vision)
     implementation(libs.mlkit.face.detection)
 
+    // Video calls: WebRTC (LiveKit's maintained libwebrtc build), OkHttp WebSocket signaling, QR codes.
+    implementation(libs.webrtc)
+    implementation(libs.okhttp)
+    implementation(libs.zxing.core)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

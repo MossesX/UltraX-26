@@ -40,11 +40,41 @@ app/src/main/kotlin/com/ultrax26/recorder/
 │   ├─ BackgroundSources.kt / StickerTextures.kt   photo/video/parallax backgrounds, drawable & PNG textures
 │   ├─ gl/ (EglCore, GlUtil, Shaders)       EGL context, programs/FBOs/quads, GLSL sources
 │   └─ ml/MediaPipeEffects.kt               Face Landmarker, Image Segmenter, Pose Landmarker adapters
+├─ calls/
+│   ├─ CallSettings.kt / InviteLinks.kt     settings (signaling, ICE, quality) and shareable link build/parse
+│   ├─ PeerJsSignaling.kt                   PeerJS-protocol websocket client (OkHttp) + payload codec
+│   ├─ WebRtcCore.kt                        PeerConnectionFactory, audio module, local tracks; renderer → SurfaceTextureHelper video source
+│   ├─ PeerLink.kt                          one RTCPeerConnection per media / data connection (PeerJS semantics)
+│   └─ CallManager.kt                       host/join/ring/answer state machine, mesh roster, chat, audio routing, foreground service
 ├─ feedback/Feedback.kt              haptics, tones, TTS, screen flash
 ├─ diagnostics/CameraReport.kt       shareable device report
-└─ ui/                               Compose: MainActivity (nav, permissions), camera screen + overlays,
-                                     settings tabs, triggers editor + keyword enrollment, all-keys editor, diagnostics
+└─ ui/                               Compose: MainActivity (nav, permissions, call links), camera screen + overlays,
+                                     call overlay / invite sheet (ui/call), settings tabs, triggers editor + keyword
+                                     enrollment, all-keys editor, diagnostics
 ```
+
+Outside the app module: `web/call/` (browser call client, PeerJS + vanilla JS, deployed by
+`.github/workflows/pages.yml`) and `server/` (self-hosted signaling + TURN + HTTPS bundle).
+
+## Video-call data flow
+
+```
+camera → EffectsRenderer ──► preview surface
+                          ├─► encoder surface (recording)
+                          └─► call surface → SurfaceTextureHelper → VideoSource → VideoTrack ─┐
+AudioRecord(VOICE_COMMUNICATION, HW AEC/NS) → JavaAudioDeviceModule → AudioTrack ─────────────┤
+                                                                                              ▼
+              PeerJsSignaling ◄── OFFER/ANSWER/CANDIDATE JSON ──► PeerLink (RTCPeerConnection per peer)
+                                                                        │ remote VideoTrack → SurfaceViewRenderer tile
+                                                                        └ DataChannel (JSON): name / roster / chat / bye
+```
+
+`CallManager` owns the state machine (`IDLE → CONNECTING → READY → RINGING_IN|RINGING_OUT → IN_CALL`),
+one `PeerLink` per remote peer for media and (host↔guest) one for data. Group calls are a mesh: the
+host answers a newcomer, then sends it the current roster over the data link; the newcomer dials each
+listed peer with the room key so they auto-answer. The same protocol is implemented by the browser
+client, so phones and browsers mix freely in one call. The recording controller keeps the GL pipeline
+alive while a call is active (`setCallActive`) even when no effect is selected.
 
 ## Threads
 - `ux-camera`: Camera2 callbacks, request building.

@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
@@ -38,6 +39,7 @@ import com.ultrax26.recorder.camera.RegionMapper
 import com.ultrax26.recorder.settings.TonemapPreset
 import com.ultrax26.recorder.triggers.RecState
 import com.ultrax26.recorder.ui.Screen
+import com.ultrax26.recorder.ui.call.CallLayer
 import com.ultrax26.recorder.ui.theme.UxColors
 import com.ultrax26.recorder.util.Maths
 import kotlinx.coroutines.delay
@@ -67,6 +69,7 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
     val audioHud = hub?.hud?.collectAsStateWithLifecycle()?.value
     val speech by graph.speechState.collectAsStateWithLifecycle()
     val speechStatus = speech?.status?.collectAsStateWithLifecycle()?.value
+    val callState by graph.calls.state.collectAsStateWithLifecycle()
 
     DisposableEffect(Unit) { graph.setCameraScreenVisible(true); onDispose { graph.setCameraScreenVisible(false) } }
 
@@ -83,6 +86,7 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
     var showNotes by remember { mutableStateOf(false) }
     var activeControl by remember { mutableStateOf<String?>(null) }
     var showEffects by remember { mutableStateOf(false) }
+    var showCall by remember { mutableStateOf(false) }
 
     LaunchedEffect(frame.zoom) { frame.zoom?.let { zoomLive = it } }
 
@@ -142,6 +146,10 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
             Spacer(Modifier.width(6.dp))
             FilterChip(selected = settings.effects.isActive() || showEffects, onClick = { showEffects = !showEffects; if (showEffects) activeControl = null }, label = { Text("Effects") },
                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = UxColors.Orange, selectedLabelColor = Color.Black))
+            Spacer(Modifier.width(6.dp))
+            FilterChip(selected = callState.inCall || callState.incoming != null, onClick = { showCall = true }, label = { Text(if (callState.inCall) "In call" else "Call") },
+                leadingIcon = { Icon(Icons.Default.Call, null, Modifier.size(16.dp)) },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = UxColors.Green, selectedLabelColor = Color.Black, selectedLeadingIconColor = Color.Black))
             Spacer(Modifier.weight(1f))
             session?.let { s ->
                 val hdr = if (s.hdr == com.ultrax26.recorder.settings.HdrMode.OFF) "SDR" else s.hdr.name.replace('_', '+')
@@ -258,6 +266,9 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
                 }
             }
         }
+
+        // ---------------- Video call layer (overlay while in a call, incoming dialog, start sheet) ----------------
+        CallLayer(graph, showCall, { showCall = false }, nav, mirrorSelf = front) { showEffects = true; showCall = false }
 
         // ---------------- Effects panel ----------------
         if (showEffects) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(end = if (landscape) 100.dp else 0.dp)) { EffectsPanel(graph) { showEffects = false } }

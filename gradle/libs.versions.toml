@@ -10,6 +10,9 @@ serialization = "1.8.1"
 mediapipeTasksVision = "0.10.21"
 mlkitFaceDetection = "16.1.7"
 junit = "4.13.2"
+webrtc = "144.7559.15"
+okhttp = "4.12.0"
+zxing = "3.5.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -31,6 +34,9 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipeTasksVision" }
 mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFaceDetection" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+webrtc = { group = "io.github.webrtc-sdk", name = "android", version.ref = "webrtc" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 
 [plugins]

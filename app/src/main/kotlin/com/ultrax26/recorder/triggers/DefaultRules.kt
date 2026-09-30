@@ -38,6 +38,11 @@ object DefaultRules {
         TriggerRule(id(), Trigger.VoiceCommand("marker", aliases = listOf("mark", "chapter")), RecAction.MARK),
         TriggerRule(id(), Trigger.VoiceCommand("arm", aliases = listOf("arm triggers", "standby")), RecAction.ARM, onlyWhenArmed = false),
         TriggerRule(id(), Trigger.VoiceCommand("disarm", aliases = listOf("disarm triggers", "stand down")), RecAction.DISARM, onlyWhenArmed = false),
+        // Video calls
+        TriggerRule(id(), Trigger.VoiceCommand("answer", aliases = listOf("answer call", "pick up")), RecAction.ANSWER_CALL, onlyWhenArmed = false),
+        TriggerRule(id(), Trigger.VoiceCommand("hang up", aliases = listOf("end call", "goodbye")), RecAction.HANG_UP, onlyWhenArmed = false),
+        TriggerRule(id(), Trigger.HandGesture(HandGestureType.THUMB_UP, holdMs = 800), RecAction.ANSWER_CALL, onlyWhenArmed = false, enabled = false),
+        TriggerRule(id(), Trigger.HandGesture(HandGestureType.OPEN_PALM, holdMs = 1200), RecAction.HANG_UP, onlyWhenArmed = false, enabled = false),
         // Device
         TriggerRule(id(), Trigger.VolumeKeyPress(VolumeKey.ANY), RecAction.TOGGLE_RECORD, onlyWhenArmed = false, cooldownMs = 800),
         TriggerRule(id(), Trigger.BluetoothButton(), RecAction.TOGGLE_RECORD, onlyWhenArmed = false, cooldownMs = 800),

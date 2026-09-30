@@ -21,6 +21,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ultrax26.recorder.AppGraph
 import com.ultrax26.recorder.BuildConfig
+import com.ultrax26.recorder.calls.CallSettings
+import com.ultrax26.recorder.calls.IceServerSpec
+import com.ultrax26.recorder.calls.InviteLinks
 import com.ultrax26.recorder.camera.Capabilities
 import com.ultrax26.recorder.recording.EncoderCapabilities
 import com.ultrax26.recorder.settings.*
@@ -41,7 +44,7 @@ fun SettingsHeader(title: String, onBack: () -> Unit, actions: @Composable RowSc
 fun SettingsScreen(graph: AppGraph, initialTab: Int, onBack: () -> Unit, nav: (Screen) -> Unit) {
     val settings by graph.settings.settings.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(initialTab.coerceIn(0, 8)) }
-    val tabs = listOf("Video", "Audio", "Camera", "Overlays", "Storage", "Presets", "Diagnostics", "Effects", "About")
+    val tabs = listOf("Video", "Audio", "Camera", "Overlays", "Storage", "Presets", "Diagnostics", "Effects", "Calls", "About")
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         SettingsHeader("Settings", onBack)
         ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
@@ -57,6 +60,7 @@ fun SettingsScreen(graph: AppGraph, initialTab: Int, onBack: () -> Unit, nav: (S
                 5 -> PresetsTab(graph, settings)
                 6 -> DiagnosticsTab(graph, nav)
                 7 -> EffectsTab(graph, settings)
+                8 -> CallsTab(graph, settings)
                 else -> AboutTab()
             }
         }
@@ -430,6 +434,55 @@ private fun EffectsTab(graph: AppGraph, s: AppSettings) {
         SwitchRow("Flip segmentation mask vertically", fx.flipMaskY) { upd { x -> x.copy(flipMaskY = it) } }
         SwitchRow("Invert head yaw for 3D stickers", fx.invertYaw) { upd { x -> x.copy(invertYaw = it) } }
         SwitchRow("Invert head pitch for 3D stickers", fx.invertPitch) { upd { x -> x.copy(invertPitch = it) } }
+    }
+}
+
+@Composable
+private fun CallsTab(graph: AppGraph, s: AppSettings) {
+    fun upd(f: (CallSettings) -> CallSettings) = graph.settings.update { it.copy(calls = f(it.calls)) }
+    val c = s.calls
+    val st by graph.calls.state.collectAsStateWithLifecycle()
+    SectionCard("Identity", "How you appear to the people you call") {
+        TextFieldRow("Display name", c.displayName, { upd { x -> x.copy(displayName = it) } })
+        TextFieldRow("My address", c.myAddress, { upd { x -> x.copy(myAddress = InviteLinks.sanitizeAddress(it)) } },
+            subtitle = "Letters, digits and dashes. Others reach you at ux-<address> whenever the app is open. Blank = a random id per session. Takes effect on the next reconnect.")
+        KeyValue("Online as", st.myPeerId ?: "—")
+        KeyValue("Status", st.error ?: st.status.ifBlank { "offline" })
+        SwitchRow("Reachable for incoming calls", c.availableForIncoming, "Keeps a signaling connection open while the app is on screen") { on -> upd { x -> x.copy(availableForIncoming = on) }; if (on) graph.calls.goOnline() else graph.calls.goOffline() }
+        SwitchRow("Ring on incoming calls", c.ringtone) { upd { x -> x.copy(ringtone = it) } }
+        Row { TextButton(onClick = { graph.calls.goOffline(); graph.calls.goOnline() }) { Text("Reconnect now") } }
+    }
+    SectionCard("Quality", "What you send; what you receive is up to the other side") {
+        PickerRow("Send resolution", listOf(640 to 360, 960 to 540, 1280 to 720, 1920 to 1080).map { it to "${it.first}×${it.second}" }, c.sendWidth to c.sendHeight, "Applied when the next call starts") { upd { x -> x.copy(sendWidth = it.first, sendHeight = it.second) } }
+        PickerRow("Send frame rate", listOf(15, 24, 30, 60).map { it to "$it fps" }, c.sendFps) { upd { x -> x.copy(sendFps = it) } }
+        IntSliderRow("Max video bitrate", c.maxBitrateKbps, 300, 8000, 100, " kb/s") { upd { x -> x.copy(maxBitrateKbps = it) } }
+        IntSliderRow("Max participants", c.maxParticipants, 2, 8, subtitle = "Group calls are peer-to-peer meshes; each extra person costs upload bandwidth") { upd { x -> x.copy(maxParticipants = it) } }
+        SwitchRow("Start calls on speakerphone", c.speakerphone) { upd { x -> x.copy(speakerphone = it) } }
+        SwitchRow("Apply effects and backgrounds to my call video", c.effectsInCalls, "Off: the call gets the plain camera image while recordings keep the effects") { upd { x -> x.copy(effectsInCalls = it) } }
+    }
+    SectionCard("Servers", "Defaults are free public services: PeerJS Cloud for signaling, Google STUN and Open Relay TURN for connectivity. Run your own with server/README.md.") {
+        TextFieldRow("Web client URL", c.webClientUrl, { upd { x -> x.copy(webClientUrl = it) } }, subtitle = "The page your invite links open (web/call, published by GitHub Pages)")
+        TextFieldRow("Signaling host", c.signalingHost, { upd { x -> x.copy(signalingHost = it.trim()) } })
+        NumberFieldRow("Signaling port", c.signalingPort.toString(), { v -> v.trim().toIntOrNull()?.let { p -> upd { x -> x.copy(signalingPort = p) } } })
+        TextFieldRow("Signaling path", c.signalingPath, { upd { x -> x.copy(signalingPath = it.trim().ifEmpty { "/" }) } })
+        TextFieldRow("Signaling key", c.signalingKey, { upd { x -> x.copy(signalingKey = it.trim()) } })
+        SwitchRow("Secure (wss)", c.signalingSecure) { upd { x -> x.copy(signalingSecure = it) } }
+        Spacer(Modifier.height(6.dp))
+        Text("ICE servers", style = MaterialTheme.typography.bodyLarge)
+        Text("One per line: url [username credential]. STUN finds a direct path; TURN relays when a direct path is blocked.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        var iceText by remember(c.iceServers) { mutableStateOf(c.iceServers.joinToString("\n") { listOf(it.urls, it.username, it.credential).filter { p -> p.isNotBlank() }.joinToString(" ") }) }
+        OutlinedTextField(iceText, { iceText = it }, Modifier.fillMaxWidth(), minLines = 3, maxLines = 8)
+        Row {
+            TextButton(onClick = {
+                val list = iceText.lines().map { it.trim() }.filter { it.isNotEmpty() }.map { line -> val p = line.split(Regex("\\s+")); IceServerSpec(p[0], p.getOrNull(1) ?: "", p.getOrNull(2) ?: "") }
+                upd { x -> x.copy(iceServers = list) }
+            }) { Text("Apply ICE servers") }
+            TextButton(onClick = { val d = CallSettings(); upd { x -> x.copy(signalingHost = d.signalingHost, signalingPort = d.signalingPort, signalingPath = d.signalingPath, signalingKey = d.signalingKey, signalingSecure = d.signalingSecure, iceServers = d.iceServers, webClientUrl = d.webClientUrl) } }) { Text("Reset servers") }
+        }
+    }
+    SectionCard("How it works") {
+        Text("Create a link and send it by any messenger; the other person opens it in a browser (phone or computer) and is in the call — no account, no app. Two UltraX phones can also call each other by address. Video and audio travel directly between the devices (or through a TURN relay when a network blocks direct paths), encrypted with DTLS-SRTP; the signaling server only passes the connection handshake and never sees the media.",
+            style = MaterialTheme.typography.bodySmall)
     }
 }
 

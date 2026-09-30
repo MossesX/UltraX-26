@@ -1,0 +1,16 @@
+# Automatic HTTPS for the browser client and the PeerJS signaling websocket.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# PeerJS signaling (websocket + the /peerjs/id REST endpoint)
+	handle_path /peerjs* {
+		reverse_proxy peerjs:9000
+	}
+
+	# Browser call client (../web → https://DOMAIN/call/)
+	handle {
+		root * /srv/web
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+}

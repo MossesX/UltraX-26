@@ -25,6 +25,9 @@ enum class RecAction(val label: String) {
     TOGGLE_TORCH("Torch on / off"),
     TOGGLE_AE_LOCK("AE lock on / off"),
     TOGGLE_AF_LOCK("AF lock on / off"),
+    ANSWER_CALL("Answer incoming video call"),
+    HANG_UP("Hang up video call"),
+    TOGGLE_CALL_MIC("Mute / unmute call microphone"),
 }
 
 /** Recorder lifecycle states a rule may be restricted to. */

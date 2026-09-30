@@ -39,6 +39,7 @@ class EffectsRenderer(private val context: Context, private val settingsProvider
     private var pbuffer: EGLSurface? = null
     private var previewEgl: EGLSurface? = null
     private var encoderEgl: EGLSurface? = null
+    private var callEgl: EGLSurface? = null
     private var previewSurface: Surface? = null
     private var encoderSurface: Surface? = null
     private var camTex = 0
@@ -145,7 +146,15 @@ class EffectsRenderer(private val context: Context, private val settingsProvider
         if (surface != null) try { encoderEgl = egl?.createWindowSurface(surface) } catch (t: Throwable) { UxLog.w(tag, "encoder surface: ${t.message}") }
     }
 
+    /** Third output: a WebRTC capture surface (video calls). Always drawn while set. */
+    fun setCallSurface(surface: Surface?) = thread.post {
+        callEgl?.let { egl?.releaseSurface(it) }; callEgl = null
+        if (surface != null) try { callEgl = egl?.createWindowSurface(surface) } catch (t: Throwable) { UxLog.w(tag, "call surface: ${t.message}") }
+    }
+
     fun setRecording(active: Boolean) { recording = active }
+    /** When true the call output carries the plain camera image (effects stay on the recording only). */
+    @Volatile var callRawCamera = false
     override fun setMapping(rotationDegrees: Int, frameAspect: Float) { if (width > 0 && height > 0) mapping = SceneMapping(rotationDegrees, frameAspect, width.toFloat() / height) }
     fun setCameraFacing(front: Boolean, mirrorPreview: Boolean, mirrorRecording: Boolean) { frontCamera = front; this.mirrorPreview = mirrorPreview; this.mirrorRecording = mirrorRecording }
     fun updateSettings(s: EffectsSettings) { settings = s }
@@ -188,6 +197,7 @@ class EffectsRenderer(private val context: Context, private val settingsProvider
     private fun releaseOutputs() {
         previewEgl?.let { egl?.releaseSurface(it) }; previewEgl = null
         encoderEgl?.let { egl?.releaseSurface(it) }; encoderEgl = null
+        callEgl?.let { egl?.releaseSurface(it) }; callEgl = null
     }
 
     private fun setVertexDefaults(p: GlProgram, flipY: Boolean = false, mirror: Boolean = false, st: FloatArray = identity) {
@@ -227,6 +237,12 @@ class EffectsRenderer(private val context: Context, private val settingsProvider
                 GLES20.glViewport(0, 0, core.querySurface(out, EGL14.EGL_WIDTH), core.querySurface(out, EGL14.EGL_HEIGHT))
                 drawOutput(final, frontCamera && mirrorRecording)
                 core.setPresentationTime(out, ts)
+                core.swapBuffers(out)
+            }
+            callEgl?.let { out ->
+                core.makeCurrent(out)
+                GLES20.glViewport(0, 0, core.querySurface(out, EGL14.EGL_WIDTH), core.querySurface(out, EGL14.EGL_HEIGHT))
+                drawOutput(if (callRawCamera) fboFrame!!.texture else final, false)
                 core.swapBuffers(out)
             }
         } catch (t: Throwable) {

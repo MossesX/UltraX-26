@@ -1,0 +1,42 @@
+# Self-hosted calling backend for UltraX 26 (optional — the app works out of the box with public servers).
+#
+#   signaling : peerjs-server (the same protocol the app and the browser client speak)
+#   turn      : coturn relay for networks that block direct peer-to-peer media
+#   web       : Caddy — automatic HTTPS, serves the browser client (../web) and proxies /peerjs
+#
+# Usage:  cp .env.example .env && edit it, then  docker compose up -d
+services:
+  peerjs:
+    image: peerjs/peerjs-server:latest
+    restart: unless-stopped
+    command: ["--port", "9000", "--path", "/", "--key", "${PEERJS_KEY:-peerjs}", "--proxied", "true", "--alive_timeout", "60000", "--expire_timeout", "30000", "--concurrent_limit", "5000"]
+    expose: ["9000"]
+
+  turn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host                 # TURN needs the real host ports (3478 + the relay range)
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    environment:
+      - TURN_REALM=${DOMAIN}
+      - TURN_USER=${TURN_USER:-ultrax}
+      - TURN_PASSWORD=${TURN_PASSWORD}
+    command: ["-c", "/etc/coturn/turnserver.conf", "--realm=${DOMAIN}", "--user=${TURN_USER:-ultrax}:${TURN_PASSWORD}", "--external-ip=${PUBLIC_IP}"]
+
+  web:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../web:/srv/web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [peerjs]
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,6 +1,7 @@
 package com.ultrax26.recorder.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Bundle
@@ -29,6 +30,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ultrax26.recorder.AppGraph
 import com.ultrax26.recorder.UltraXApp
+import com.ultrax26.recorder.calls.InviteLinks
 import com.ultrax26.recorder.ui.camera.CameraScreen
 import com.ultrax26.recorder.ui.settings.AllKeysScreen
 import com.ultrax26.recorder.ui.settings.DiagnosticsScreen
@@ -53,6 +55,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent { Root(graph) }
+        if (savedInstanceState == null) handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    /** A call link (https://…/UltraX-26/call?to=… or ultrax://call?to=…) opened on this phone joins the call directly. */
+    private fun handleIntent(i: Intent?) {
+        val url = i?.dataString ?: return
+        if (i.action == Intent.ACTION_VIEW && InviteLinks.parse(url) != null) graph.calls.callPeer(url)
     }
 
     override fun onStart() { super.onStart(); graph.setForeground(true) }

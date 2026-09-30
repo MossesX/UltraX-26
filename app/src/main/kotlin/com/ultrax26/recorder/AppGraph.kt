@@ -3,6 +3,7 @@ package com.ultrax26.recorder
 import android.app.Application
 import android.os.Handler
 import android.os.Looper
+import com.ultrax26.recorder.calls.CallManager
 import com.ultrax26.recorder.camera.CameraCatalog
 import com.ultrax26.recorder.camera.CameraEngine
 import com.ultrax26.recorder.camera.ThermalMonitor
@@ -46,6 +47,7 @@ class AppGraph(val app: Application) {
     val faceInterpreter = FaceGestureInterpreter(settings.current.triggers.face) { e -> triggers.onEvent(e) }
     val dispatcher = FrameDispatcher(handInterpreter, faceInterpreter, scopes)
     val controller = RecordingController(app, settings, catalog, engine, dispatcher, feedback, thermal)
+    val calls = CallManager(app, settings)
     val motion = MotionTriggers(app) { e -> triggers.onEvent(e) }
     val volumeKeys = VolumeKeyTriggers { e -> triggers.onEvent(e) }
     val mediaButtons = MediaButtonTriggers(app) { e -> triggers.onEvent(e) }
@@ -74,6 +76,13 @@ class AppGraph(val app: Application) {
         feedback.config = settings.current.triggers.feedback
         triggers.setArmed(settings.current.triggers.armedByDefault)
         controller.audioCaptureProvider = { capture }
+        calls.onPipelineWanted = { on -> controller.setCallActive(on) }
+        controller.callActions = object : RecordingController.CallActions {
+            override fun answer() { calls.accept() }
+            override fun hangUp() { calls.hangUp() }
+            override fun toggleMic() { calls.toggleMic() }
+        }
+        scope.launch { controller.rendererState.collect { r -> calls.attachRenderer(r) } }
         scope.launch { settings.settings.collect { s -> onSettings(s) } }
         scope.launch { triggers.armed.collect { controller.onArmedChanged() } }
     }
@@ -126,8 +135,8 @@ class AppGraph(val app: Application) {
         foreground.value = visible
         if (visible) ensureAudioCapture(settings.current)
         controller.setForeground(visible)
-        if (!visible) { stopAudioCapture(); speech?.stop(); speech = null; speechState.value = null; motion.stop(); mediaButtons.stop() }
-        else { applyDeviceTriggers(settings.current); applySpeech(settings.current) }
+        if (!visible) { stopAudioCapture(); speech?.stop(); speech = null; speechState.value = null; motion.stop(); mediaButtons.stop(); if (!calls.state.value.inCall) calls.goOffline() }
+        else { applyDeviceTriggers(settings.current); applySpeech(settings.current); if (settings.current.calls.availableForIncoming) calls.goOnline() }
     }
 
     fun onPermissionsChanged() { if (foreground.value) { ensureAudioCapture(settings.current); controller.rebuild() } }
