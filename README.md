@@ -94,6 +94,9 @@ triggers work and how to tune them, **docs/ARCHITECTURE.md** for the code layout
   phones call each other directly; incoming calls ring with Answer / Decline — or say **“answer”**.
 - Group calls up to 6 (peer-to-peer mesh), text chat, speaker/earpiece, camera on/off, mute,
   **record while in a call**, and every AR effect / virtual background applied to your call video.
+- **Call with Google Meet** hand-off: start a Meet call, join a Meet link or code, or Meet-video-call
+  a number / contact from the same sheet (runs in the Meet app — Google has no API for third-party
+  clients to join Meet with their own video).
 - WebRTC media (DTLS-SRTP encrypted, hardware codecs) with PeerJS-protocol signaling. Works out of
   the box on free public servers; `server/` has a one-command self-hosted stack (peerjs-server +
   coturn + Caddy). The browser client lives in `web/call/` and deploys to GitHub Pages automatically.

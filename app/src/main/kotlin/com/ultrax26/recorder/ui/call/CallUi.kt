@@ -8,6 +8,9 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
+import android.provider.ContactsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -84,6 +87,7 @@ import com.ultrax26.recorder.AppGraph
 import com.ultrax26.recorder.calls.CallUiState
 import com.ultrax26.recorder.calls.IncomingCall
 import com.ultrax26.recorder.calls.InviteLinks
+import com.ultrax26.recorder.calls.MeetLauncher
 import com.ultrax26.recorder.calls.Participant
 import com.ultrax26.recorder.settings.AppSettings
 import com.ultrax26.recorder.triggers.RecAction
@@ -283,6 +287,8 @@ private fun CallStartSheet(graph: AppGraph, st: CallUiState, settings: AppSettin
             Button(onClick = { if (target.isNotBlank()) { graph.calls.callPeer(target.trim()); onDismiss() } }, enabled = target.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text("Call")
             }
+            Spacer(Modifier.height(18.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
+            GoogleMeetSection()
             Spacer(Modifier.height(18.dp)); HorizontalDivider(); Spacer(Modifier.height(6.dp))
             SwitchRow("Reachable for incoming calls", cs.availableForIncoming, "Your address: ${st.myPeerId ?: "—"}") { on ->
                 graph.settings.update { it.copy(calls = it.calls.copy(availableForIncoming = on)) }
@@ -291,6 +297,62 @@ private fun CallStartSheet(graph: AppGraph, st: CallUiState, settings: AppSettin
             TextButton(onClick = { onDismiss(); nav(Screen.Settings(8)) }) { Text("Call settings — permanent address, quality, servers") }
         }
     }
+}
+
+/**
+ * Hand-off to the Google Meet app. Google has no API for third-party apps to join Meet calls with their
+ * own media, so these buttons launch Meet itself: new meeting, join by link/code, or a Meet (Duo-style)
+ * video call to a phone number. The call runs in Meet, without UltraX effects.
+ */
+@Composable
+private fun GoogleMeetSection() {
+    val ctx = LocalContext.current
+    val installed = remember { MeetLauncher.isInstalled(ctx) }
+    var meetTarget by remember { mutableStateOf("") }
+    var number by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf<String?>(null) }
+    val pickContact = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val uri = res.data?.data ?: return@rememberLauncherForActivityResult
+        try {
+            ctx.contentResolver.query(uri, arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val n = c.getString(0) ?: ""
+                    number = n
+                    note = if (MeetLauncher.callNumber(ctx, n, video = true)) "Calling ${c.getString(1) ?: n} in Google Meet…" else "Google Meet could not start a call to $n"
+                }
+            }
+        } catch (t: Throwable) { note = "Could not read that contact: ${t.message}" }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(22.dp).background(Color(0xFF00897B), RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) { Text("M", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.width(8.dp))
+        Text("Call with Google Meet", style = MaterialTheme.typography.titleMedium)
+    }
+    Text(if (installed) "Hands the call to the Google Meet app. The call runs in Meet, so UltraX filters and backgrounds don't apply there."
+         else "Google Meet is not installed: meeting links open in the browser, and calling a phone number needs the app.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (!installed) TextButton(onClick = { MeetLauncher.openPlayStore(ctx) }) { Text("Get Google Meet") }
+    Spacer(Modifier.height(6.dp))
+    Button(onClick = { note = if (MeetLauncher.startNewMeeting(ctx)) null else "Nothing on this phone can open meet.google.com" }, modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B), contentColor = Color.White)) {
+        Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text("Start a Meet call")
+    }
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(meetTarget, { meetTarget = it }, Modifier.weight(1f), label = { Text("Meet link or code") }, singleLine = true, placeholder = { Text("abc-defg-hij") })
+        Spacer(Modifier.width(8.dp))
+        OutlinedButton(onClick = { note = when { MeetLauncher.normalizeMeetingLink(meetTarget) == null -> "That doesn't look like a Meet link or code"; MeetLauncher.joinMeeting(ctx, meetTarget) -> null; else -> "Could not open that meeting" } }, enabled = meetTarget.isNotBlank()) { Text("Join") }
+    }
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(number, { number = it }, Modifier.weight(1f), label = { Text("Phone number") }, singleLine = true, placeholder = { Text("+1 555 123 4567") })
+        Spacer(Modifier.width(8.dp))
+        OutlinedButton(onClick = { note = when { !installed -> "Calling a number needs the Google Meet app"; MeetLauncher.normalizeNumber(number) == null -> "Enter a phone number"; MeetLauncher.callNumber(ctx, number, video = true) -> null; else -> "Google Meet could not start that call" } }, enabled = number.isNotBlank() && installed) { Text("Video call") }
+    }
+    TextButton(onClick = {
+        try { pickContact.launch(Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)) } catch (_: ActivityNotFoundException) { note = "No contacts app found" }
+    }, enabled = installed) { Text("Pick a contact to video call in Meet") }
+    note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = UxColors.Amber) }
 }
 
 @Composable

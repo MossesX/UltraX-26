@@ -83,6 +83,8 @@ pro strip). Anything else — including every **Samsung vendor tag** the HAL lis
 | QR code, Share / SMS / Copy invite; links open the app directly on phones that have it | ✅ |
 | Public defaults (PeerJS Cloud, Google STUN, Open Relay TURN) + self-host bundle in `server/` | ✅ |
 | Browser client on GitHub Pages (`web/call/`), also hosts calls itself | ✅ |
+| Google Meet hand-off: start a Meet call, join by link/code, Meet video call to a phone number or contact | ✅ opens the Meet app; no effects there |
+| Joining Google Meet meetings with UltraX's own video | ⛔ no public API (Meet Media API is receive-only) |
 | Screen sharing, call recording of remote participants, SFU for large rooms | ⛔ not yet |
 
 ## Monitoring overlays

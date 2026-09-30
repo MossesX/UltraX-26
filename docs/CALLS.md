@@ -39,6 +39,23 @@ mute/camera/flip, chat and the invite link (when they are hosting). The page als
 stand-alone starting point: opening `/call/` with no parameters hosts a new call from the browser, and
 UltraX phones can join it via the link or by dialing its address.
 
+## Call with Google Meet
+
+Google publishes no API that lets a third-party app join or place Meet calls with its own audio and
+video (the Meet REST API only creates meeting links and reads recordings; the Meet Media API is
+receive-only, Workspace-only and in developer preview). So the **Call with Google Meet** section of
+the Call sheet *hands off* to the Google Meet app instead:
+
+| Button | What happens |
+| --- | --- |
+| **Start a Meet call** | Opens `meet.google.com/new` in the Meet app (or the browser if Meet is not installed) |
+| **Join** | Accepts a Meet link, a `abc-defg-hij` code (with or without dashes), a `g.co/meet/…` short link or a Workspace nickname, and opens it in Meet |
+| **Video call** / **Pick a contact** | Meet's one-tap video call to a phone number (the Duo-style consumer call); needs the Meet app and a callee reachable on Meet |
+
+The call then runs inside Google Meet, so UltraX filters and backgrounds do not apply there. To use
+UltraX's video in a Meet meeting on a computer, open one of UltraX's own call links on that computer
+and capture the window with a virtual camera such as OBS.
+
 ## How it works
 
 ```

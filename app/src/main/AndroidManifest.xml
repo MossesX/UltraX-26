@@ -30,6 +30,21 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- Google Meet hand-off: detect the Meet app and open https / smsto / market links -->
+        <package android:name="com.google.android.apps.tachyon" />
+        <package android:name="com.google.android.apps.meetings" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK" />
+            <data android:mimeType="vnd.android.cursor.dir/phone_v2" />
+        </intent>
     </queries>
 
     <application
