@@ -71,3 +71,22 @@ detections; expect a little lag on fast head moves.
   (flip camera texture / flip mask / invert yaw or pitch) and enable the mask overlay.
 - Body-anchored costume pieces use Pose Landmarker; when pose tracking is off, shoulders and chest are
   estimated from the face.
+
+## When costumes or backgrounds do nothing
+
+Stickers, costumes and face modes need the **face mesh** model; backgrounds and behind-person layers
+need the **segmentation** model. Both run on the gesture analysis stream, and all of it runs behind the
+GL pipeline. The Effects panel header now says which link is missing:
+
+| Status line | Meaning / fix |
+| --- | --- |
+| *Pipeline off: effects start with the next clip* | You are recording on the direct camera→encoder path. Stop the clip, or turn on *Settings ▸ Effects ▸ Keep pipeline on* so effects can be switched mid-recording. Opening the panel while idle starts the pipeline immediately. |
+| *Face: model not loaded* / *Person mask: model not loaded* with an *Error:* | The MediaPipe model failed to initialize. The error text names the cause (missing asset, GPU delegate). Switch *Gestures ▸ Tuning ▸ Hands ▸ delegate* to CPU and reopen the panel. |
+| *Face: model ready, no face seen* | Detection works but no face is in the gesture camera's view. Check *Gestures ▸ Tuning ▸ Gesture camera* — if it is set to the other camera, the effects track the wrong lens. |
+| *Person mask: no mask yet* | The segmenter runs but has returned nothing; try the single-class model (*Settings ▸ Effects ▸ Multi-class segmentation* off). |
+| *No analysis frames* | Gesture analysis is disabled or the camera could not add the analysis stream (high-speed mode, or a session limit). Enable it under *Gestures ▸ Tuning*. |
+| *GL: …* | The compositor hit a GPU error; lower *Settings ▸ Effects ▸ Render resolution*. |
+
+**Diagnostics ▸ Effects self-test** loads every model with the GPU and CPU delegates, runs one frame
+through each and appends the timings or the exact exception to the device report — share that report
+when asking for help.

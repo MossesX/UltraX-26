@@ -41,9 +41,13 @@ fun EffectsPanel(graph: AppGraph, onClose: () -> Unit) {
     val fx = settings.effects
     val renderer by graph.controller.rendererState.collectAsStateWithLifecycle()
     val stats = renderer?.stats?.collectAsStateWithLifecycle()?.value
+    val vision by graph.dispatcher.hud.collectAsStateWithLifecycle()
+    val recState by graph.controller.state.collectAsStateWithLifecycle()
     fun upd(f: (EffectsSettings) -> EffectsSettings) = graph.settings.update { it.copy(effects = f(it.effects)) }
     var tab by remember { mutableStateOf(0) }
     val tabs = listOf("Looks", "Backgrounds", "Stickers", "Beauty", "Face & age", "Style", "My assets")
+    // Keep the GL pipeline running while the panel is open so every tap shows immediately.
+    DisposableEffect(Unit) { graph.controller.setEffectsPanelOpen(true); onDispose { graph.controller.setEffectsPanelOpen(false) } }
 
     Column(Modifier.fillMaxWidth().background(UxColors.Panel, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)).padding(bottom = 8.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -55,6 +59,21 @@ fun EffectsPanel(graph: AppGraph, onClose: () -> Unit) {
             TextButton(onClick = { upd { it.cleared() } }) { Text("Clear all") }
             TextButton(onClick = onClose) { Text("Close") }
         }
+        // ---- status: says exactly which part of the chain is not working ----
+        val recording = recState == com.ultrax26.recorder.triggers.RecState.RECORDING || recState == com.ultrax26.recorder.triggers.RecState.PAUSED
+        val needMesh = fx.needsFaceMesh(); val needSeg = fx.needsSegmentation()
+        val status = buildList {
+            if (renderer == null) add(if (recording) "Pipeline off: effects start with the next clip (or turn on Settings ▸ Effects ▸ Keep pipeline on)" else "Pipeline starting…")
+            else {
+                if (needMesh) add(when { vision.meshReady && vision.meshTracked -> "Face: tracking"; vision.meshReady -> "Face: model ready, no face seen — face the gesture camera"; vision.modelsLoading -> "Face: loading model…"; else -> "Face: model not loaded" })
+                if (needSeg) add(when { vision.segReady && vision.segTracked -> "Person mask: OK"; vision.segReady -> "Person mask: no mask yet"; vision.modelsLoading -> "Person mask: loading model…"; else -> "Person mask: model not loaded" })
+                if (vision.analysisFps <= 0.1f && (needMesh || needSeg)) add("No analysis frames: enable gesture analysis (Settings ▸ Gestures ▸ Tuning) — effects track on that stream")
+            }
+            vision.lastError?.let { add("Error: $it") }
+            stats?.error?.let { add("GL: $it") }
+        }
+        if (status.isNotEmpty()) Text(status.joinToString("  ·  "), color = if (status.any { it.startsWith("Error") || it.contains("not loaded") || it.startsWith("GL") }) UxColors.Amber else Color.White.copy(alpha = 0.75f),
+            style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 12.dp))
         ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp, containerColor = Color.Transparent) {
             tabs.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, maxLines = 1) }) }
         }

@@ -133,6 +133,19 @@ class RecordingController(
     private var renderer: EffectsRenderer? = null
     val rendererState = MutableStateFlow<EffectsRenderer?>(null)
     @Volatile private var callActive = false
+    /** True while the Effects panel is open: the GL pipeline runs so taps show instantly (and keep working mid-recording). */
+    @Volatile private var effectsPanelOpen = false
+
+    fun setEffectsPanelOpen(open: Boolean) = ctrl.post {
+        if (effectsPanelOpen == open) return@post
+        effectsPanelOpen = open
+        val s = settingsStore.current
+        if (s.effects.needsPipeline() || callActive) return@post        // pipeline already on (or staying on)
+        if (state.value == RecState.RECORDING || state.value == RecState.PAUSED) { if (open) toast("Effects start with the next clip (pipeline is off while this clip records)"); return@post }
+        rebuildInternal(force = true)
+    }
+
+    val pipelineActive: Boolean get() = renderer != null
     /** Video-call actions routed from triggers (set by the app graph). */
     @Volatile var callActions: CallActions? = null
 
@@ -214,7 +227,7 @@ class RecordingController(
         s.video.bitrateMode, s.video.bitrateMbps, s.video.cqQuality, s.video.iFrameIntervalSec, s.video.maxBFrames, s.video.hdr, s.video.fullRange,
         s.video.timelapseFactor, s.video.mirrorFrontCamera, s.video.preRollSeconds,
         s.audio, s.analysis, s.triggers.gestureCamera, s.triggers.hand.enabled, s.triggers.face.enabled, previewSize,
-        s.effects.needsPipeline(), s.effects.renderRes, callActive, s.audio.scrubTriggerSounds, s.audio.scrubDelayMs, s.audio.scrubMode,
+        s.effects.needsPipeline() || effectsPanelOpen, s.effects.renderRes, callActive, s.audio.scrubTriggerSounds, s.audio.scrubDelayMs, s.audio.scrubMode,
     ).joinToString("|")
 
     // ------------------------------------------------------------------------------------------
@@ -295,7 +308,7 @@ class RecordingController(
         if (highSpeed && hdr != HdrMode.OFF) { notes += "HDR not available in high-speed mode"; hdr = HdrMode.OFF; profile = DynamicRangeProfiles.STANDARD }
 
         // --- effects pipeline (GL compositor between camera and encoder) ---
-        val fx = (s.effects.needsPipeline() || callActive) && !highSpeed
+        val fx = (s.effects.needsPipeline() || callActive || effectsPanelOpen) && !highSpeed
         if (s.effects.needsPipeline() && highSpeed) notes += "Effects are unavailable in high-speed mode"
         if (fx) {
             if (hdr != HdrMode.OFF) { notes += "HDR is recorded as SDR while effects are active"; hdr = HdrMode.OFF; profile = DynamicRangeProfiles.STANDARD }

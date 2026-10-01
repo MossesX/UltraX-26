@@ -46,6 +46,16 @@ fun DiagnosticsScreen(graph: AppGraph, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         SettingsHeader("Device report", onBack) {
             TextButton(onClick = { fullKeys = !fullKeys; generate() }) { Text(if (fullKeys) "Compact" else "Full keys") }
+            TextButton(onClick = {
+                busy = true
+                scope.launch {
+                    val delegate = graph.settings.current.triggers.hand.delegate
+                    val gpu = withContext(Dispatchers.IO) { runCatching { com.ultrax26.recorder.diagnostics.EffectsSelfTest.run(ctx, delegate) }.getOrElse { "Self-test crashed: $it" } }
+                    val cpu = if (delegate != com.ultrax26.recorder.settings.MlDelegate.CPU) withContext(Dispatchers.IO) { runCatching { com.ultrax26.recorder.diagnostics.EffectsSelfTest.run(ctx, com.ultrax26.recorder.settings.MlDelegate.CPU) }.getOrElse { "Self-test crashed: $it" } } else ""
+                    report = (report ?: "") + "\n\n" + gpu + "\n" + cpu
+                    busy = false
+                }
+            }, enabled = !busy) { Text("Effects self-test") }
             TextButton(onClick = { report?.let { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("UltraX26 report", it)) } }, enabled = report != null) { Text("Copy") }
             TextButton(onClick = { saver.launch("ultrax26-device-report.txt") }, enabled = report != null) { Text("Save") }
         }

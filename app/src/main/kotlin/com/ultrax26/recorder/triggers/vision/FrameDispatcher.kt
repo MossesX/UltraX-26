@@ -47,6 +47,11 @@ class FrameDispatcher(
     @Volatile var meshEnabled = false
     @Volatile var segmentationEnabled = false
     @Volatile var poseEnabled = false
+    /** Model-loading failures persist here (per-frame errors would overwrite them within one frame). */
+    @Volatile var initError: String? = null
+    /** "loading" while an init thread works on the effects models, so the UI can say so. */
+    @Volatile var modelsLoading = false
+    private var lastSegOkMs = 0L
     @Volatile var handDetector: HandDetector? = null
     @Volatile var faceDetector: FaceDetector? = null
     @Volatile var handsEnabled = true
@@ -113,7 +118,7 @@ class FrameDispatcher(
         }
         val sg = segmenter
         if (segmentationEnabled && sg != null && sink != null) {
-            try { sink.onSegmentation(sg.segment(frame)) } catch (t: Throwable) { err = "segmentation: ${t.message}" }
+            try { val m = sg.segment(frame); if (m != null) lastSegOkMs = nowMs; sink.onSegmentation(m) } catch (t: Throwable) { err = "segmentation: ${t.message}" }
         }
         val pd = poseDetector
         if (poseEnabled && pd != null && sink != null) {
@@ -139,8 +144,9 @@ class FrameDispatcher(
             heldGesture = handInterpreter.currentLabel, heldMs = handInterpreter.currentHeldMs,
             blinkCount = faceInterpreter.blinkCount, fingerCount = handInterpreter.currentFingers,
             frameWidth = if (upright) h else w, frameHeight = if (upright) w else h,
-            handsAvailable = hd != null, facesAvailable = fd != null || (meshEnabled && fm != null), lastError = err,
+            handsAvailable = hd != null, facesAvailable = fd != null || (meshEnabled && fm != null), lastError = err ?: initError,
             meshTracked = meshResult != null,
+            meshReady = fm != null, segReady = sg != null, poseReady = pd != null, segTracked = nowMs - lastSegOkMs < 1000, modelsLoading = modelsLoading,
         )
     }
 

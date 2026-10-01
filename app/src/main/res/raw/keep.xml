@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sticker and background art is looked up by name at runtime (fx_<id>, bg_<id>); keep it through resource shrinking. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/fx_*,@drawable/bg_*"
+    tools:shrinkMode="safe" />

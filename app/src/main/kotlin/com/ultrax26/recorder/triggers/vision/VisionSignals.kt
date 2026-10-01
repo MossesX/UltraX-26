@@ -74,4 +74,9 @@ data class VisionHudState(
     val facesAvailable: Boolean = false,
     val lastError: String? = null,
     val meshTracked: Boolean = false,
+    val meshReady: Boolean = false,
+    val segReady: Boolean = false,
+    val poseReady: Boolean = false,
+    val segTracked: Boolean = false,
+    val modelsLoading: Boolean = false,
 )

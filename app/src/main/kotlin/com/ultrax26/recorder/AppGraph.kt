@@ -212,17 +212,20 @@ class AppGraph(val app: Application) {
         val needSeg = dispatcher.segmentationEnabled && (dispatcher.segmenter == null || segmenterKey != wantSegKey)
         val needPose = dispatcher.poseEnabled && dispatcher.poseDetector == null
         if (!needHands && !needFaces && !needMesh && !needSeg && !needPose) return
+        dispatcher.modelsLoading = true
         detectorsThread = Thread({
             val delegate = s.triggers.hand.delegate
-            try { if (needMesh) dispatcher.faceMesh = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.faceMesh(app, delegate) } catch (t: Throwable) { UxLog.e(tag, "face mesh init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Face mesh failed: ${t.message}") }
-            try { if (needSeg) { dispatcher.segmenter?.close(); dispatcher.segmenter = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.segmenter(app, fx.useMultiClassSegmenter, delegate); segmenterKey = wantSegKey } } catch (t: Throwable) { UxLog.e(tag, "segmenter init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Segmenter failed: ${t.message}") }
-            try { if (needPose) dispatcher.poseDetector = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.pose(app, delegate) } catch (t: Throwable) { UxLog.e(tag, "pose init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Pose failed: ${t.message}") }
-            try {
-                if (needHands) dispatcher.handDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.hand(app, s.triggers.hand)
-            } catch (t: Throwable) { UxLog.e(tag, "MediaPipe init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Hand model failed: ${t.message}") }
-            try {
-                if (needFaces) dispatcher.faceDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.face(s.triggers.face)
-            } catch (t: Throwable) { UxLog.e(tag, "ML Kit init failed", t); dispatcher.hud.value = dispatcher.hud.value.copy(lastError = "Face model failed: ${t.message}") }
+            val errors = ArrayList<String>()
+            fun fail(what: String, t: Throwable) { UxLog.e(tag, "$what init failed", t); errors += "$what failed: ${t.message ?: t.javaClass.simpleName}" }
+            try { if (needMesh) dispatcher.faceMesh = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.faceMesh(app, delegate) } catch (t: Throwable) { fail("Face mesh model", t) }
+            try { if (needSeg) { dispatcher.segmenter?.close(); dispatcher.segmenter = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.segmenter(app, fx.useMultiClassSegmenter, delegate); segmenterKey = wantSegKey } } catch (t: Throwable) { fail("Segmentation model", t) }
+            try { if (needPose) dispatcher.poseDetector = com.ultrax26.recorder.effects.ml.EffectsDetectorFactory.pose(app, delegate) } catch (t: Throwable) { fail("Pose model", t) }
+            try { if (needHands) dispatcher.handDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.hand(app, s.triggers.hand) } catch (t: Throwable) { fail("Hand gesture model", t) }
+            try { if (needFaces) dispatcher.faceDetector = com.ultrax26.recorder.triggers.vision.DetectorFactory.face(s.triggers.face) } catch (t: Throwable) { fail("Face detector (ML Kit)", t) }
+            dispatcher.initError = errors.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+            dispatcher.modelsLoading = false
+            // Settings may have changed while we were loading (e.g. an effect toggled on): run again for anything still missing.
+            main.post { if (foreground.value) ensureDetectors(settings.current) }
         }, "ux-ml-init").also { it.start() }
     }
 
