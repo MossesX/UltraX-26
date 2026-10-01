@@ -26,6 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true   # turns Pages on for the repo the first time (source: GitHub Actions)
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
