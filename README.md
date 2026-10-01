@@ -119,8 +119,10 @@ the **UltraX26-apks** artifact on every push. `.github/workflows/pages.yml` publ
 call client (`web/`) to GitHub Pages — enable *Settings → Pages → Source: GitHub Actions* once.
 
 ### Install on the phone
-Enable *Developer options → USB debugging*, then `adb install -r app/build/outputs/apk/debug/app-debug.apk`,
-or download the CI artifact on the phone and install the APK (allow "install unknown apps").
+Easiest: open **https://github.com/MossesX/UltraX-26/releases/latest/download/UltraX26-debug.apk** in the
+phone's browser, allow installs from the browser when asked, tap Install. CI republishes that file on every
+push to `main`. Alternatives (Android Studio, `adb install -r app/build/outputs/apk/debug/app-debug.apk`)
+are in **docs/INSTALL.md**.
 
 ## Permissions
 Camera, microphone (recording + audio triggers + calls), notifications (foreground recording / call
