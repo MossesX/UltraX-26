@@ -96,6 +96,7 @@ class TriggerEngine(
         is TriggerEvent.HeadShake -> "Shake ×${e.count}"
         is TriggerEvent.ClapBurst -> "Clap ×${e.count}"
         is TriggerEvent.SnapBurst -> "Snap ×${e.count}"
+        is TriggerEvent.Pinch -> if (e.direction == PinchDirection.OUT) "Unpinch (spread)" else "Pinch (close)"
         is TriggerEvent.Whistle -> "Whistle ${e.frequencyHz.toInt()} Hz"
         is TriggerEvent.Loud -> "Loud ${e.peakDbfs.toInt()} dB"
         is TriggerEvent.Voice -> "Heard “${e.text}” (${e.engine.name.lowercase()})"
@@ -152,6 +153,7 @@ class TriggerEngine(
             is Trigger.HandsUp -> when (e) { is TriggerEvent.HandsUpHeld -> hold(true, e.heldMs, t.holdMs); is TriggerEvent.HandsUpReleased -> Match.RESET; else -> Match.NONE }
             is Trigger.FingerCount -> when (e) { is TriggerEvent.FingersHeld -> hold(e.fingers == t.fingers, e.heldMs, t.holdMs); is TriggerEvent.FingersReleased -> Match.RESET; else -> Match.NONE }
             is Trigger.GestureSequence -> if (e is TriggerEvent.HandReleased && sequenceMatches(t)) { gestureHistory.clear(); Match.FIRE } else Match.NONE
+            is Trigger.Pinch -> if (e is TriggerEvent.Pinch && (t.direction == PinchDirection.ANY || t.direction == e.direction)) Match.FIRE else Match.NONE
             is Trigger.Blink -> if (e is TriggerEvent.BlinkBurst && e.count == t.count && e.durationMs <= t.windowMs) Match.FIRE else Match.NONE
             is Trigger.Wink -> if (e is TriggerEvent.Wink && (t.eye == Eye.ANY || t.eye == e.eye)) Match.FIRE else Match.NONE
             is Trigger.Smile -> when (e) { is TriggerEvent.SmileHeld -> hold(true, e.heldMs, t.holdMs); is TriggerEvent.SmileReleased -> Match.RESET; else -> Match.NONE }

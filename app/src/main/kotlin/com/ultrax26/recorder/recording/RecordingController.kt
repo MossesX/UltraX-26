@@ -24,6 +24,7 @@ import com.ultrax26.recorder.settings.LensMode
 import com.ultrax26.recorder.settings.SettingsStore
 import com.ultrax26.recorder.settings.VideoCodec
 import com.ultrax26.recorder.triggers.EngineEvent
+import com.ultrax26.recorder.triggers.TriggerEvent
 import com.ultrax26.recorder.triggers.RecAction
 import com.ultrax26.recorder.triggers.RecState
 import com.ultrax26.recorder.triggers.TriggerEngine
@@ -39,6 +40,7 @@ import kotlinx.serialization.encodeToString
 import java.io.ByteArrayOutputStream
 import java.util.Date
 import kotlin.math.abs
+import kotlin.math.pow
 
 /** What the session actually resolved to (may differ from the request when the device can't do it). */
 data class SessionInfo(
@@ -114,6 +116,9 @@ class RecordingController(
     private var displayRotation = 0
     private var videoEncoder: VideoEncoder? = null
     private var audioEncoder: AudioEncoder? = null
+    /** Delay line that silences trigger sounds before they are encoded (null when the option is off). */
+    private var audioScrubber: AudioScrubber? = null
+    private var pinchBaseZoom: Float? = null
     private var writer: ClipWriter? = null
     private var preRoll: PreRollBuffer = PreRollBuffer(0)
     private var preRollActive = false
@@ -208,7 +213,7 @@ class RecordingController(
         s.video.bitrateMode, s.video.bitrateMbps, s.video.cqQuality, s.video.iFrameIntervalSec, s.video.maxBFrames, s.video.hdr, s.video.fullRange,
         s.video.timelapseFactor, s.video.mirrorFrontCamera, s.video.preRollSeconds,
         s.audio, s.analysis, s.triggers.gestureCamera, s.triggers.hand.enabled, s.triggers.face.enabled, previewSize,
-        s.effects.needsPipeline(), s.effects.renderRes, callActive,
+        s.effects.needsPipeline(), s.effects.renderRes, callActive, s.audio.scrubTriggerSounds, s.audio.scrubDelayMs, s.audio.scrubMode,
     ).joinToString("|")
 
     // ------------------------------------------------------------------------------------------
@@ -222,6 +227,7 @@ class RecordingController(
         renderer = null; rendererState.value = null
         gestureEngine?.shutdown(); gestureEngine = null
         videoEncoder?.release(); videoEncoder = null
+        audioScrubber?.let { sc -> attachedCapture?.removeListener(sc); sc.clear() }; audioScrubber = null
         audioEncoder?.let { enc -> attachedCapture?.removeListener(enc); enc.release() }; audioEncoder = null
         attachedCapture = null
         preRoll.clear(); preRollActive = false
@@ -355,7 +361,12 @@ class RecordingController(
         if (s.audio.enabled && !(highSpeed && s.video.slowMotionPlaybackFps != null)) {
             if (cap != null) {
                 val aenc = AudioEncoder(AudioEncoderConfig(cap.config.sampleRate, cap.config.channels, s.audio.bitrateKbps * 1000), ctrl.handler, this)
-                cap.addListener(aenc)
+                if (s.audio.scrubTriggerSounds) {
+                    val scrub = AudioScrubber(aenc, s.audio.scrubDelayMs, if (s.audio.scrubMode == com.ultrax26.recorder.settings.ScrubMode.DUCK) AudioScrubber.Mode.DUCK else AudioScrubber.Mode.MUTE)
+                    audioScrubber = scrub
+                    cap.addListener(scrub)
+                    notes += "Trigger sounds are removed from the audio (${s.audio.scrubDelayMs} ms audio hold-back)"
+                } else cap.addListener(aenc)
                 audioEncoder = aenc
                 attachedCapture = cap
                 audioOk = true
@@ -508,6 +519,7 @@ class RecordingController(
 
     fun onEngineEvent(e: EngineEvent) = ctrl.post {
         when (e) {
+            is EngineEvent.Fired -> scrubTriggerSound(e.event)
             is EngineEvent.CountdownTick -> if (state.value == RecState.IDLE) state.value = RecState.COUNTDOWN
             is EngineEvent.CountdownCancelled -> if (state.value == RecState.COUNTDOWN) state.value = RecState.IDLE
             is EngineEvent.Armed -> updatePreRollArming()
@@ -516,6 +528,40 @@ class RecordingController(
     }
 
     private fun cancelCountdown() { triggers.cancelCountdownRequest(); if (state.value == RecState.COUNTDOWN) state.value = RecState.IDLE }
+
+    /** Time range (boot-time ms) a fired sound trigger occupies, padded; null for non-audio events. */
+    internal fun scrubWindowMs(e: TriggerEvent, s: AppSettings, nowMs: Long): Pair<Long, Long>? {
+        val gap = s.triggers.audio.clapMaxGapMs
+        val (start, end) = when (e) {
+            is TriggerEvent.ClapBurst -> (e.timestampMs - (e.count - 1) * gap - 250) to (e.timestampMs + 150)
+            is TriggerEvent.SnapBurst -> (e.timestampMs - (e.count - 1) * gap - 200) to (e.timestampMs + 120)
+            is TriggerEvent.Whistle -> (e.timestampMs - e.durationMs - 150) to (e.timestampMs + 150)
+            is TriggerEvent.Loud -> (e.timestampMs - 250) to (e.timestampMs + 250)
+            is TriggerEvent.Voice -> (e.timestampMs - s.audio.scrubVoicePhraseMs) to (e.timestampMs + 250)
+            else -> return null
+        }
+        val pad = s.audio.scrubPadMs.toLong()
+        val tail = if (s.audio.scrubFeedbackSounds) maxOf(end + pad, nowMs + 900) else end + pad
+        return (start - pad) to tail
+    }
+
+    private fun scrubTriggerSound(e: TriggerEvent) {
+        val sc = audioScrubber ?: return
+        val s = settingsStore.current
+        if (!s.audio.scrubTriggerSounds) return
+        val (a, b) = scrubWindowMs(e, s, Clock.bootMs()) ?: return
+        sc.mute(a * 1_000_000L, b * 1_000_000L)
+    }
+
+    /** Continuous pinch-zoom from the hand interpreter: zoom follows the finger spread while a pinch is held. */
+    fun onPinchScale(e: TriggerEvent.PinchScale) = ctrl.post {
+        val h = settingsStore.current.triggers.hand
+        if (!h.continuousPinchZoom || !(::triggers.isInitialized && triggers.armed.value)) return@post
+        if (e.start || pinchBaseZoom == null) pinchBaseZoom = engine.frameInfo.value.zoom ?: settingsStore.current.capture.zoomRatio
+        val base = pinchBaseZoom ?: 1f
+        val target = base * e.scale.coerceIn(0.2f, 5f).toDouble().pow(h.pinchZoomGain.toDouble()).toFloat()
+        engine.setZoom(target, animate = false)
+    }
 
     private fun startInternal() {
         if (state.value == RecState.RECORDING || state.value == RecState.PAUSED || state.value == RecState.FINALIZING) return
@@ -598,6 +644,7 @@ class RecordingController(
 
     private fun pauseInternal() {
         if (state.value != RecState.RECORDING) return
+        audioScrubber?.flush()
         writer?.pause(lastVideoPtsUs)
         pausedAtBootMs = Clock.bootMs()
         state.value = RecState.PAUSED
@@ -619,9 +666,10 @@ class RecordingController(
         state.value = RecState.FINALIZING
         intervalRunnable?.let { ctrl.handler.removeCallbacks(it) }; intervalRunnable = null
         engine.setRecordingTarget(false); renderer?.setRecording(false)
-        audioEncoder?.enabled = false
-        // Let the last frames drain, then finalize.
-        ctrl.postDelayed(350) {
+        audioScrubber?.flush()
+        ctrl.postDelayed(if (audioScrubber != null) 450L else 0L) { audioEncoder?.enabled = false }
+        // Let the last frames (and any held-back audio) drain, then finalize.
+        ctrl.postDelayed(if (audioScrubber != null) 900L else 350L) {
             pending.clear()
             val files = try { w.finish() } catch (t: Throwable) { UxLog.e(tag, "finish failed", t); emptyList() }
             writer = null

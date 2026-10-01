@@ -78,3 +78,47 @@ volume keys / MediaSession buttons / accelerometer / proximity → device events
 Thumbs up → start · thumbs down / fist → stop · open palm → pause/resume · victory → frame grab ·
 blink ×3 → start/stop · double clap → start/stop · "start recording" / "stop recording" / "pause" /
 "resume" / "snapshot" / "marker" / "arm" / "disarm" · volume keys & Bluetooth button → start/stop.
+
+## Pinch zoom
+
+Thumb and index finger of one hand, in view of the gesture camera:
+
+- **Spread them apart (unpinch)** → one zoom-in step. **Bring them together (pinch)** → one zoom-out step.
+  The step size is *Camera ▸ Zoom step*. The movement has to complete within 0.7 s (Tuning ▸ Hands lets
+  you change the thresholds). These are ordinary rules (`Pinch / unpinch` trigger → `Zoom in` / `Zoom out`
+  action), so you can rebind them, require a hand, or disable them.
+- **Continuous zoom** (Tuning ▸ Hands ▸ *Continuous pinch zoom*): hold the fingers touching for a
+  quarter second, then open or close them — the zoom ratio follows the spread live until the hand leaves
+  the frame. *Pinch zoom gain* sets how strongly the spread maps to zoom.
+
+The distance is normalized by hand size (wrist to middle knuckle), so it works at any distance from the
+camera. Discrete pinch events pause while a continuous session is active so a spread does not also fire a
+step.
+
+## Recording your own voice triggers
+
+Any word, phrase or sound you can repeat can be a trigger — the built-in keyword spotter is a template
+matcher (MFCC + DTW) trained on *your* voice, and it listens to the recording's own microphone stream, so it
+keeps working while recording even when the system recognizer is muted.
+
+1. **Gestures ▸ Rules ▸ Record a voice trigger** (or open any Voice-command rule).
+2. Type the phrase, tap **Record this voice trigger**, say it 3–5 times with normal pauses, tap **Done**.
+3. Pick the action (start, stop, snapshot, zoom…), save. The Voice tab lists every trained command with its
+   sample count, sensitivity and rejection margin.
+
+Tips: record in the room you will shoot in; record a couple of samples at different distances; keep
+commands at least two syllables apart from each other.
+
+## Removing trigger sounds from the recording
+
+*Settings ▸ Audio ▸ Remove trigger sounds from recordings.* The recorded audio is held back for a
+configurable delay (default 2.5 s) before it is encoded. When a rule fires on a clap, snap, whistle, loud
+sound or spoken command, the time range that sound occupied — plus the confirmation beep — is silenced
+(or ducked to −30 dB) with short fades before the audio reaches the encoder. The video is untouched and
+A/V sync is preserved because timestamps are not changed; only the moment of writing moves.
+
+- The hold-back must cover the detection latency: claps fire within ~0.2 s of the last clap, voice
+  commands can take 1–3 s to be recognized, so use 2.5–3.5 s when you rely on voice.
+- Pre-roll clips are covered as well: the clap that *started* a recording is in the pre-roll audio and is
+  silenced the same way.
+- The removal is per fired rule; claps that do not match a rule stay in the recording.

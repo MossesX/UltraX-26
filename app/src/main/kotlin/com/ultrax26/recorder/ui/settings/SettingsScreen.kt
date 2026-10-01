@@ -78,12 +78,14 @@ private fun VideoTab(graph: AppGraph, s: AppSettings) {
     val cameraId = s.capture.cameraId ?: graph.catalog.defaultBackId()
     val chars = remember(cameraId) { runCatching { cameraId?.let { graph.catalog.characteristics(it) } }.getOrNull() }
     val sizes = remember(chars) { chars?.let { Capabilities.videoSizes(it) } ?: emptyList() }
+    val hiResOnly = remember(chars) { chars?.let { Capabilities.highResolutionOnlySizes(it) } ?: emptySet() }
     val hsSizes = remember(chars) { chars?.let { Capabilities.highSpeedSizes(it) } ?: emptyList() }
     val cur = Size(v.width, v.height)
 
     SectionCard("Format", "Only sizes and rates this camera advertises are listed") {
         val list = (if (v.highSpeed) hsSizes else sizes).ifEmpty { listOf(cur) }
-        PickerRow("Resolution", list.map { it to "${it.width}×${it.height}  (${resLabel(it)})" }, list.firstOrNull { it == cur } ?: list.first()) { upd { x -> x.copy(width = it.width, height = it.height) } }
+        PickerRow("Resolution", list.map { it to "${it.width}×${it.height}  (${resLabel(it)})${if (it in hiResOnly) " · high-res mode" else ""}" }, list.firstOrNull { it == cur } ?: list.first()) { upd { x -> x.copy(width = it.width, height = it.height) } }
+        if (!v.highSpeed && sizes.none { it.width >= 7680 }) EightKFinder(graph, s, cameraId)
         val fpsOptions = if (chars == null) listOf(v.fps) else if (v.highSpeed) Capabilities.highSpeedFpsRanges(chars, cur).map { it.upper }.distinct().sorted().ifEmpty { listOf(120, 240) } else Capabilities.selectableFps(chars, cur).ifEmpty { listOf(24, 30, 60) }
         PickerRow("Frame rate", fpsOptions.map { it to "$it fps" }, if (v.fps in fpsOptions) v.fps else fpsOptions.last()) { upd { x -> x.copy(fps = it) } }
         SwitchRow("High-speed capture (120/240 fps)", v.highSpeed, "Constrained high-speed session; gesture camera stream unavailable while active", enabled = hsSizes.isNotEmpty()) { on ->
@@ -145,6 +147,47 @@ private fun resLabel(sz: Size): String {
 // Audio
 // ------------------------------------------------------------------------------------------------
 
+/**
+ * Shown when the selected camera does not list 7680×4320. Scans every camera this phone exposes
+ * (public, hidden and the physical sub-cameras of logical ones) and offers to switch to one that does.
+ */
+@Composable
+private fun EightKFinder(graph: AppGraph, s: AppSettings, cameraId: String?) {
+    var scanning by remember { mutableStateOf(false) }
+    var hits by remember { mutableStateOf<List<com.ultrax26.recorder.camera.CameraCatalog.EightKHit>?>(null) }
+    LaunchedEffect(scanning) {
+        if (scanning) {
+            hits = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { graph.catalog.find8k(true, s.capture.hiddenIdProbeMax) }.getOrDefault(emptyList()) }
+            scanning = false
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    Text("8K is not advertised by camera ${cameraId ?: "?"} through Camera2.", style = MaterialTheme.typography.bodyMedium, color = com.ultrax26.recorder.ui.theme.UxColors.Amber)
+    Text("Samsung exposes some sizes only on hidden or physical camera IDs, or only in the slower \"high-resolution\" set. Scan to find out.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row { TextButton(onClick = { scanning = true }, enabled = !scanning) { Text(if (scanning) "Scanning…" else "Scan all cameras for 8K") } }
+    hits?.let { found ->
+        if (found.isEmpty()) {
+            Text("No camera on this phone lists 7680×4320 for third-party apps. Samsung keeps 8K for its own camera app; nothing in Camera2 or the vendor keys this app can see unlocks it. Share the Diagnostics report and the vendor tags can be checked by hand.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else found.forEach { h ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(h.name, style = MaterialTheme.typography.bodyMedium)
+                    Text("7680×4320 · up to ${h.maxFps} fps${if (h.highResOnly) " · high-resolution mode" else ""}${if (h.viaLogicalId != null) " · via physical-lens lock" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Button(onClick = {
+                    graph.settings.update { st ->
+                        val cap = if (h.viaLogicalId != null) st.capture.copy(cameraId = h.viaLogicalId, lensMode = LensMode.LOCK_PHYSICAL, lockedPhysicalCameraId = h.cameraId, zoomRatio = 1f)
+                                  else st.capture.copy(cameraId = h.cameraId, lensMode = LensMode.AUTO, lockedPhysicalCameraId = null, zoomRatio = 1f)
+                        st.copy(capture = cap, video = st.video.copy(width = 7680, height = 4320, fps = minOf(st.video.fps, h.maxFps).coerceAtLeast(1), highSpeed = false))
+                    }
+                }) { Text("Use") }
+            }
+        }
+    }
+}
+
+
 @Composable
 private fun AudioTab(graph: AppGraph, s: AppSettings) {
     fun upd(f: (AudioSettings) -> AudioSettings) = graph.settings.update { it.copy(audio = f(it.audio)) }
@@ -160,6 +203,16 @@ private fun AudioTab(graph: AppGraph, s: AppSettings) {
         PickerRow("Channels", listOf(1 to "Mono", 2 to "Stereo"), a.channels) { upd { x -> x.copy(channels = it) } }
         PickerRow("AAC bitrate", listOf(64, 96, 128, 192, 256, 320, 384, 512).map { it to "$it kb/s" }, a.bitrateKbps) { upd { x -> x.copy(bitrateKbps = it) } }
         PickerRow("Codec", AudioCodec.entries.map { it to it.label }, a.codec) { upd { x -> x.copy(codec = it) } }
+    }
+    SectionCard("Remove trigger sounds", "Silences the clap, snap, whistle or spoken command that fired a rule — and the confirmation beep — so they are not heard in the recording") {
+        SwitchRow("Remove trigger sounds from recordings", a.scrubTriggerSounds, "Holds the audio back briefly before encoding; video and sync are unaffected") { upd { x -> x.copy(scrubTriggerSounds = it) } }
+        if (a.scrubTriggerSounds) {
+            PickerRow("How", ScrubMode.entries.map { it to it.label }, a.scrubMode) { upd { x -> x.copy(scrubMode = it) } }
+            IntSliderRow("Audio hold-back", a.scrubDelayMs / 100, 5, 50, suffix = "00 ms", subtitle = "Must cover the time between the sound and the rule firing: ~1 s for claps, 2.5–3.5 s for voice commands (recognizer latency)") { upd { x -> x.copy(scrubDelayMs = it * 100) } }
+            IntSliderRow("Voice command length", a.scrubVoicePhraseMs / 100, 5, 40, suffix = "00 ms", subtitle = "Silence this long before a recognized command") { upd { x -> x.copy(scrubVoicePhraseMs = it * 100) } }
+            IntSliderRow("Padding around each sound", a.scrubPadMs / 50, 0, 10, suffix = "×50 ms") { upd { x -> x.copy(scrubPadMs = it * 50) } }
+            SwitchRow("Also silence the confirmation beep", a.scrubFeedbackSounds) { upd { x -> x.copy(scrubFeedbackSounds = it) } }
+        }
     }
     SectionCard("Processing") {
         SliderRow("Digital gain", a.gainDb, -12f..24f, format = { "%+.0f dB".format(it) }) { upd { x -> x.copy(gainDb = it.roundToInt().toFloat()) } }

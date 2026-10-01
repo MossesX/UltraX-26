@@ -247,7 +247,18 @@ data class AudioSettings(
     val privacySensitive: Boolean? = null,   // null = system default for the source
     val muteWhileRecording: Boolean = false,
     val triggerFeedbackDucking: Boolean = true,
+    // ---- trigger-sound removal: the recorded audio is held back a little so the clap / snap / whistle /
+    //      spoken command that fired a rule can be silenced before it is encoded ----
+    val scrubTriggerSounds: Boolean = false,
+    val scrubMode: ScrubMode = ScrubMode.MUTE,
+    val scrubDelayMs: Int = 2500,            // audio latency budget (video is unaffected; A/V stays in sync)
+    val scrubVoicePhraseMs: Int = 2500,      // how far before a recognized command to start silencing
+    val scrubPadMs: Int = 150,               // extra silence around each sound
+    val scrubFeedbackSounds: Boolean = true, // also silence the confirmation beep the phone plays
 )
+
+@Serializable
+enum class ScrubMode(val label: String) { MUTE("Silence"), DUCK("Duck to −30 dB") }
 
 // ------------------------------------------------------------------------------------------------
 // Triggers (gesture / voice / device)
@@ -273,6 +284,13 @@ data class HandGestureConfig(
     val delegate: MlDelegate = MlDelegate.GPU,
     val stabilityFrames: Int = 2,            // consecutive frames before a gesture counts as "held"
     val releaseGraceMs: Long = 250,          // tolerate classifier flicker
+    // ---- pinch zoom (thumb ↔ index finger) ----
+    val pinchZoom: Boolean = true,           // emit pinch / unpinch events (rules map them to zoom steps)
+    val continuousPinchZoom: Boolean = false,// hold a pinch, then spread/close to drive the zoom ratio live
+    val pinchZoomGain: Float = 1.5f,         // zoom = base × spread^gain
+    val pinchCloseRatio: Float = 0.35f,      // tip distance / hand size below which fingers count as touching
+    val pinchOpenRatio: Float = 0.85f,       // above which they count as spread
+    val pinchWindowMs: Long = 700,           // max time for the close→open or open→close movement
 )
 
 @Serializable

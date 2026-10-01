@@ -125,7 +125,7 @@ class CameraCatalog(private val context: Context) {
         val c = characteristics(id)
         val caps = c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: IntArray(0)
         val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        val videoSizes = map?.getOutputSizes(MediaCodec::class.java)?.toList() ?: emptyList()
+        val videoSizes = Capabilities.videoSizes(c)   // regular + high-resolution PRIVATE sizes
         val maxVideo = videoSizes.maxByOrNull { it.width.toLong() * it.height }
         val focal = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS) ?: FloatArray(0)
         val sensor = c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
@@ -182,6 +182,34 @@ class CameraCatalog(private val context: Context) {
     /** Physical sub-cameras of a logical camera, with their infos (they are addressable even if not public). */
     fun physicalInfos(logicalId: String): List<CameraInfo> =
         (info(logicalId)?.physicalIds ?: emptyList()).mapNotNull { info(it, hidden = true) }
+
+    /** Where (if anywhere) this phone exposes 8K video to third-party apps. */
+    data class EightKHit(val cameraId: String, val viaLogicalId: String?, val highResOnly: Boolean, val maxFps: Int, val name: String)
+
+    /**
+     * Scans every public camera, probed hidden IDs and the physical sub-cameras of logical cameras for a
+     * 7680×4320 (or larger) stream. Physical sub-cameras that are not directly openable are reported
+     * through their logical parent (recorded with a physical-lens lock).
+     */
+    fun find8k(probeHidden: Boolean, maxHidden: Int): List<EightKHit> {
+        val hits = ArrayList<EightKHit>()
+        val seen = HashSet<String>()
+        fun check(id: String, via: String?, name: String) {
+            if (!seen.add(id)) return
+            try {
+                val c = characteristics(id)
+                val sizes = Capabilities.videoSizes(c).filter { it.width >= 7680 && it.height >= 4320 }
+                if (sizes.isEmpty()) return
+                val hiRes = Capabilities.highResolutionOnlySizes(c)
+                val best = sizes.first()
+                hits += EightKHit(id, via, best in hiRes, Capabilities.maxFpsFor(c, best), name)
+            } catch (_: Throwable) { }
+        }
+        val infos = allInfos(probeHidden, maxHidden)
+        infos.forEach { i -> check(i.id, null, i.shortName) }
+        infos.filter { it.isLogical }.forEach { i -> i.physicalIds.forEach { pid -> check(pid, i.id, "${i.shortName} → physical $pid") } }
+        return hits
+    }
 
     /** Best default: first public back-facing camera, else the first public camera. */
     fun defaultBackId(): String? {

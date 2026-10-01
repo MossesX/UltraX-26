@@ -17,6 +17,8 @@ object DefaultRules {
         TriggerRule(id(), Trigger.HandGesture(HandGestureType.CLOSED_FIST, holdMs = 800), RecAction.STOP,
             states = listOf(RecState.RECORDING, RecState.PAUSED)),
         TriggerRule(id(), Trigger.HandGesture(HandGestureType.VICTORY, holdMs = 600), RecAction.SNAPSHOT),
+        TriggerRule(id(), Trigger.Pinch(PinchDirection.OUT), RecAction.ZOOM_IN, onlyWhenArmed = false),
+        TriggerRule(id(), Trigger.Pinch(PinchDirection.IN), RecAction.ZOOM_OUT, onlyWhenArmed = false),
         TriggerRule(id(), Trigger.VisualClap(), RecAction.TOGGLE_RECORD, enabled = false),
         TriggerRule(id(), Trigger.HandWave(), RecAction.TOGGLE_RECORD, enabled = false),
         // Face

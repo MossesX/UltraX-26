@@ -20,13 +20,38 @@ data class EnumOption(val value: Int, val label: String)
  */
 object Capabilities {
 
+    /**
+     * Every size the camera can deliver to an encoder: the regular PRIVATE / MediaCodec / MediaRecorder /
+     * SurfaceTexture output lists plus the "high resolution" PRIVATE sizes (API 23+). Some HALs — Samsung's
+     * among them — list 7680×4320 only in the high-resolution set, which is documented as possibly running
+     * below 20 fps; [highResolutionOnlySizes] tells the UI which ones those are.
+     */
     fun videoSizes(c: CameraCharacteristics): List<Size> {
         val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return emptyList()
         val sizes = LinkedHashSet<Size>()
-        map.getOutputSizes(MediaCodec::class.java)?.let { sizes += it }
-        map.getOutputSizes(ImageFormat.PRIVATE)?.let { sizes += it }
+        regularVideoSizes(c).let { sizes += it }
+        try { map.getHighResolutionOutputSizes(ImageFormat.PRIVATE)?.let { sizes += it } } catch (_: Throwable) { }
         return sizes.sortedByDescending { it.width.toLong() * it.height }
     }
+
+    /** Sizes guaranteed for normal-rate streaming (no high-resolution set). */
+    fun regularVideoSizes(c: CameraCharacteristics): List<Size> {
+        val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return emptyList()
+        val sizes = LinkedHashSet<Size>()
+        try { map.getOutputSizes(MediaCodec::class.java)?.let { sizes += it } } catch (_: Throwable) { }
+        try { map.getOutputSizes(ImageFormat.PRIVATE)?.let { sizes += it } } catch (_: Throwable) { }
+        try { map.getOutputSizes(android.media.MediaRecorder::class.java)?.let { sizes += it } } catch (_: Throwable) { }
+        try { map.getOutputSizes(android.graphics.SurfaceTexture::class.java)?.let { sizes += it } } catch (_: Throwable) { }
+        return sizes.sortedByDescending { it.width.toLong() * it.height }
+    }
+
+    /** Sizes that appear only in the high-resolution set (may stream below 20 fps). */
+    fun highResolutionOnlySizes(c: CameraCharacteristics): Set<Size> {
+        val regular = regularVideoSizes(c).toSet()
+        return videoSizes(c).filterNot { it in regular }.toSet()
+    }
+
+    fun has8k(c: CameraCharacteristics): Boolean = videoSizes(c).any { it.width >= 7680 && it.height >= 4320 }
 
     fun previewSizes(c: CameraCharacteristics): List<Size> {
         val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return emptyList()
@@ -42,7 +67,9 @@ object Capabilities {
     /** Max fps the camera can deliver for a MediaCodec-consumed size in a regular session. */
     fun maxFpsFor(c: CameraCharacteristics, size: Size): Int {
         val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return 30
-        val minDur = try { map.getOutputMinFrameDuration(MediaCodec::class.java, size) } catch (_: Throwable) { 0L }
+        val minDur = try { map.getOutputMinFrameDuration(MediaCodec::class.java, size) } catch (_: Throwable) {
+            try { map.getOutputMinFrameDuration(ImageFormat.PRIVATE, size) } catch (_: Throwable) { 0L }
+        }
         if (minDur <= 0) return 30
         return (1_000_000_000.0 / minDur).toInt().coerceAtLeast(1)
     }

@@ -30,6 +30,12 @@ no app needed — with your filters and backgrounds applied to the call.
   digital gain, wind high-pass filter, limiter, privacy-sensitive flag; lossless WAV sidecar option.
 - Frame grabs (JPEG) during recording; per-clip JSON sidecar with settings, markers and trigger log.
 
+- **Pinch zoom by hand**: spread thumb and index finger to zoom in, pinch to zoom out; optional live
+  continuous zoom while holding the pinch.
+- **Record your own voice triggers** — any word or sound, trained on your voice in the app — and
+  **remove trigger sounds from recordings** (claps, commands, the confirmation beep are silenced before
+  encoding, video untouched).
+
 **Camera control ("every option the phone has")**
 - Manual ISO / shutter (180° helper) / EV / AE lock / anti-banding / target FPS range.
 - Manual focus in diopters with distance readout, AF modes, tap-to-focus/meter, AF lock,

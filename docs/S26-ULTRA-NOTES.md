@@ -51,3 +51,19 @@ and share it if something looks off.
   Samsung's camera app rather than the Camera2 HAL.
 - Background recording with the screen off (the camera stream is torn down when the preview
   surface disappears); the foreground service only keeps the process alive when you switch apps.
+
+## 8K video and Camera2
+
+Samsung's own camera app records 8K through private HAL paths. For third-party apps the Camera2
+`StreamConfigurationMap` decides what exists. On recent Ultras 7680×4320 is often **not** in the regular
+output list of the public logical camera (ID 0); where it is exposed at all it tends to show up in one of
+three places, all of which the app now checks:
+
+1. the **high-resolution** PRIVATE output set (`getHighResolutionOutputSizes`) — documented as "may run
+   below 20 fps", the app labels these sizes *high-res mode* and caps the frame rate accordingly;
+2. a **hidden camera ID** (the per-sensor cameras Samsung does not list publicly);
+3. a **physical sub-camera** of the logical camera, reachable by recording with a physical-lens lock.
+
+*Settings ▸ Video ▸ Scan all cameras for 8K* runs this search and switches the camera for you. If the scan
+finds nothing, the phone does not expose 8K to third-party apps and no setting in this app can change that;
+share the Diagnostics report so the vendor tags can be checked.

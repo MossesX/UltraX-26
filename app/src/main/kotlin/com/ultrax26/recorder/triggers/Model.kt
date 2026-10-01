@@ -81,6 +81,9 @@ enum class VolumeKey { UP, DOWN, ANY }
  * live detection state lives in the interpreters and the engine.
  */
 @Serializable
+enum class PinchDirection(val label: String) { IN("Pinch (fingers close) — zoom out"), OUT("Unpinch (fingers spread) — zoom in"), ANY("Either") }
+
+@Serializable
 sealed class Trigger {
     abstract val label: String
     abstract val category: String
@@ -127,6 +130,13 @@ sealed class Trigger {
     @Serializable @SerialName("finger_count")
     data class FingerCount(val fingers: Int = 3, val holdMs: Long = 700) : Trigger() {
         override val label get() = "$fingers fingers up (hold ${holdMs}ms)"
+        override val category get() = "Hand"
+    }
+
+    /** Thumb and index finger closing (IN) or spreading apart (OUT) within a short window. */
+    @Serializable @SerialName("pinch")
+    data class Pinch(val direction: PinchDirection = PinchDirection.OUT) : Trigger() {
+        override val label get() = when (direction) { PinchDirection.IN -> "Pinch fingers"; PinchDirection.OUT -> "Unpinch fingers"; PinchDirection.ANY -> "Pinch / unpinch" }
         override val category get() = "Hand"
     }
 
@@ -272,6 +282,10 @@ sealed class TriggerEvent {
     data class HandsUpReleased(override val timestampMs: Long) : TriggerEvent()
     data class FingersHeld(val fingers: Int, val heldMs: Long, override val timestampMs: Long) : TriggerEvent()
     data class FingersReleased(override val timestampMs: Long) : TriggerEvent()
+    /** Discrete pinch: fingers went from spread to touching (IN) or touching to spread (OUT). */
+    data class Pinch(val direction: PinchDirection, val ratio: Float, override val timestampMs: Long) : TriggerEvent()
+    /** Continuous pinch-zoom: spread relative to where the pinch-hold started (1.0 = unchanged). */
+    data class PinchScale(val scale: Float, val start: Boolean, override val timestampMs: Long) : TriggerEvent()
 
     data class BlinkBurst(val count: Int, val durationMs: Long, override val timestampMs: Long) : TriggerEvent()
     data class Wink(val eye: Eye, override val timestampMs: Long) : TriggerEvent()

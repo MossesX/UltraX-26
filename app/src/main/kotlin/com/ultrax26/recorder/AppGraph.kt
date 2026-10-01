@@ -43,7 +43,7 @@ class AppGraph(val app: Application) {
     val keywordStore = KeywordStore(app)
     val scopes = ScopesAnalyzer()
     lateinit var triggers: TriggerEngine
-    val handInterpreter = HandGestureInterpreter(settings.current.triggers.hand) { e -> triggers.onEvent(e) }
+    val handInterpreter: HandGestureInterpreter = HandGestureInterpreter(settings.current.triggers.hand) { e -> onHandEvent(e) }
     val faceInterpreter = FaceGestureInterpreter(settings.current.triggers.face) { e -> triggers.onEvent(e) }
     val dispatcher = FrameDispatcher(handInterpreter, faceInterpreter, scopes)
     val controller = RecordingController(app, settings, catalog, engine, dispatcher, feedback, thermal)
@@ -87,7 +87,13 @@ class AppGraph(val app: Application) {
         scope.launch { triggers.armed.collect { controller.onArmedChanged() } }
     }
 
+    /** Continuous pinch-zoom goes straight to the controller; everything else is a trigger event. */
+    private fun onHandEvent(e: com.ultrax26.recorder.triggers.TriggerEvent) {
+        if (e is com.ultrax26.recorder.triggers.TriggerEvent.PinchScale) controller.onPinchScale(e) else triggers.onEvent(e)
+    }
+
     private fun onSettings(s: AppSettings) {
+        handInterpreter.cfg = s.triggers.hand
         if (foreground.value) ensureDetectors(s)
         triggers.updateSettings(s.triggers)
         feedback.config = s.triggers.feedback

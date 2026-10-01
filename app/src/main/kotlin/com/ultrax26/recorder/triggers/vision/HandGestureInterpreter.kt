@@ -3,6 +3,7 @@ package com.ultrax26.recorder.triggers.vision
 import com.ultrax26.recorder.settings.HandGestureConfig
 import com.ultrax26.recorder.triggers.HandGestureType
 import com.ultrax26.recorder.triggers.Handedness
+import com.ultrax26.recorder.triggers.PinchDirection
 import com.ultrax26.recorder.triggers.TriggerEvent
 import com.ultrax26.recorder.triggers.audio.BurstCounter
 import kotlin.math.abs
@@ -12,7 +13,7 @@ import kotlin.math.hypot
  * Turns per-frame hand observations into hold/release, wave, visual-clap, hands-up and
  * finger-count events. Pure Kotlin (unit-testable).
  */
-class HandGestureInterpreter(private val cfg: HandGestureConfig, private val sink: (TriggerEvent) -> Unit) {
+class HandGestureInterpreter(@Volatile var cfg: HandGestureConfig, private val sink: (TriggerEvent) -> Unit) {
 
     private class Slot {
         var gesture: HandGestureType? = null
@@ -40,6 +41,20 @@ class HandGestureInterpreter(private val cfg: HandGestureConfig, private val sin
     private var handsApartMs = -1L
     private val clapBurst = BurstCounter(900) { count, endMs -> sink(TriggerEvent.VisualClap(count, endMs)) }
     private var lastClapMs = -10000L
+
+    // pinch zoom (thumb tip ↔ index tip, normalized by hand size)
+    private var pinchZone = 0                 // -1 closed, 1 open, 0 in between / unknown
+    private var lastOpenMs = -1L
+    private var lastClosedMs = -1L
+    private var closedSinceMs = -1L
+    private var pinchLastSeenMs = -1L
+    private var lastPinchEventMs = -10000L
+    private var sessionActive = false
+    private var sessionRef = Float.NaN
+    private var sessionLastEmitted = Float.NaN
+    var currentPinchRatio: Float = Float.NaN
+        private set
+    val pinchSessionActive: Boolean get() = sessionActive
 
     var currentLabel: String? = null
         private set
@@ -124,7 +139,53 @@ class HandGestureInterpreter(private val cfg: HandGestureConfig, private val sin
             }
         } else handsDist = Float.NaN
         clapBurst.tick(nowMs)
+
+        trackPinch(hands, nowMs)
     }
+
+    /**
+     * Pinch / unpinch: the thumb-tip↔index-tip distance divided by the hand size (wrist → middle MCP).
+     * A quick open→closed movement is a Pinch(IN), closed→open a Pinch(OUT). Holding the pinch for a
+     * moment starts a continuous zoom session (if enabled) that reports the spread relative to the
+     * hold position until the hand leaves the frame.
+     */
+    private fun trackPinch(hands: List<HandObservation>, nowMs: Long) {
+        if (!cfg.pinchZoom) { if (sessionActive) endSession(nowMs); return }
+        val h = hands.firstOrNull { it.landmarks.size >= 21 }
+        if (h == null) {
+            currentPinchRatio = Float.NaN
+            if (pinchLastSeenMs >= 0 && nowMs - pinchLastSeenMs > 600) { endSession(nowMs); pinchZone = 0; closedSinceMs = -1; pinchLastSeenMs = -1 }
+            return
+        }
+        pinchLastSeenMs = nowMs
+        val lm = h.landmarks
+        val handSize = d(lm[0], lm[9]).coerceAtLeast(1e-3f)
+        val r = d(lm[4], lm[8]) / handSize
+        currentPinchRatio = r
+        val zone = if (r < cfg.pinchCloseRatio) -1 else if (r > cfg.pinchOpenRatio) 1 else 0
+        if (zone == -1) { if (closedSinceMs < 0) closedSinceMs = nowMs } else if (zone == 1) closedSinceMs = -1
+        if (zone != 0 && zone != pinchZone) {
+            val from = pinchZone
+            pinchZone = zone
+            val discreteAllowed = !sessionActive && nowMs - lastPinchEventMs > 400
+            if (zone == -1 && from != -1 && lastOpenMs >= 0 && nowMs - lastOpenMs <= cfg.pinchWindowMs && discreteAllowed) { lastPinchEventMs = nowMs; sink(TriggerEvent.Pinch(PinchDirection.IN, r, nowMs)) }
+            if (zone == 1 && from != 1 && lastClosedMs >= 0 && nowMs - lastClosedMs <= cfg.pinchWindowMs && discreteAllowed) { lastPinchEventMs = nowMs; sink(TriggerEvent.Pinch(PinchDirection.OUT, r, nowMs)) }
+        }
+        if (zone == 1) lastOpenMs = nowMs
+        if (zone == -1) lastClosedMs = nowMs
+        // continuous session: pinch held for 250 ms starts it; spread/close then drives the zoom
+        if (cfg.continuousPinchZoom) {
+            if (!sessionActive && closedSinceMs >= 0 && nowMs - closedSinceMs >= 250) {
+                sessionActive = true; sessionRef = r.coerceAtLeast(0.12f); sessionLastEmitted = Float.NaN
+                sink(TriggerEvent.PinchScale(1f, start = true, timestampMs = nowMs))
+            } else if (sessionActive) {
+                val scale = (r.coerceAtLeast(0.05f) / sessionRef)
+                if (sessionLastEmitted.isNaN() || abs(scale - sessionLastEmitted) > 0.02f) { sessionLastEmitted = scale; sink(TriggerEvent.PinchScale(scale, start = false, timestampMs = nowMs)) }
+            }
+        } else if (sessionActive) endSession(nowMs)
+    }
+
+    private fun endSession(nowMs: Long) { if (sessionActive) { sessionActive = false; sessionRef = Float.NaN; sessionLastEmitted = Float.NaN } }
 
     private fun release(slot: Slot, nowMs: Long) {
         val g = slot.gesture ?: return

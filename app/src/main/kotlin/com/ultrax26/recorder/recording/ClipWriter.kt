@@ -67,7 +67,9 @@ class ClipWriter(
 
     fun write(s: EncodedSample) {
         if (!isReady) return
-        if (isPaused) return
+        // While paused, drop everything except audio that belongs *before* the pause point (it may arrive
+        // late because of encoder latency or the trigger-sound hold-back).
+        if (isPaused && !(s.track == Track.AUDIO && s.ptsUs < pausedAtUs)) return
         when (s.track) {
             Track.VIDEO -> writeVideo(s)
             Track.AUDIO -> writeAudio(s)

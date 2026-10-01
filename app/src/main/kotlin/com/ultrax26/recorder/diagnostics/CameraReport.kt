@@ -33,6 +33,11 @@ object CameraReport {
             try {
                 val c = catalog.characteristics(i.id)
                 sb.appendLine("videoSizes=${Capabilities.videoSizes(c).take(24)}")
+                sb.appendLine("highResOnlyVideoSizes=${Capabilities.highResolutionOnlySizes(c)}")
+                sb.appendLine("8K advertised=${Capabilities.has8k(c)}")
+                i.physicalIds.forEach { pid ->
+                    try { val pc = catalog.characteristics(pid); sb.appendLine("  physical $pid videoSizes=${Capabilities.videoSizes(pc).take(12)} 8K=${Capabilities.has8k(pc)}") } catch (t: Throwable) { sb.appendLine("  physical $pid: ${t.message}") }
+                }
                 Capabilities.highSpeedSizes(c).forEach { hs -> sb.appendLine("  highSpeed $hs -> ${Capabilities.highSpeedFpsRanges(c, hs)}") }
                 sb.appendLine("streamUseCases=${Capabilities.streamUseCases(c).joinToString()}")
                 sb.appendLine("vendor request keys (${i.vendorRequestKeyNames.size}): ${i.vendorRequestKeyNames.joinToString()}")

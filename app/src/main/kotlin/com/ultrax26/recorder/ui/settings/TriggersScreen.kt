@@ -51,6 +51,9 @@ private fun AppGraph.updTriggers(f: (TriggerSettings) -> TriggerSettings) = sett
 private fun RulesTab(graph: AppGraph, t: TriggerSettings) {
     var editing by remember { mutableStateOf<TriggerRule?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var addingVoice by remember { mutableStateOf(false) }
+    val hubForEnroll by graph.audioHubState.collectAsStateWithLifecycle()
+    CompositionLocalProvider(LocalEnroll provides EnrollHandle(hubForEnroll)) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -58,6 +61,13 @@ private fun RulesTab(graph: AppGraph, t: TriggerSettings) {
                 Button(onClick = { adding = true }) { Text("Add rule") }
                 Spacer(Modifier.width(6.dp))
                 TextButton(onClick = { graph.updTriggers { it.copy(rules = DefaultRules.build()) } }) { Text("Defaults") }
+            }
+        }
+        item {
+            Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { addingVoice = true }) { Text("Record a voice trigger") }
+                Spacer(Modifier.width(8.dp))
+                Text("Say your own word or sound 3–5 times; it becomes a command you can bind to any action.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             }
         }
         val grouped = t.rules.groupBy { it.trigger.category }
@@ -88,10 +98,42 @@ private fun RulesTab(graph: AppGraph, t: TriggerSettings) {
         RuleDialog(TriggerRule(UUID.randomUUID().toString(), Trigger.HandGesture(), RecAction.START), title = "New rule", onDismiss = { adding = false },
             onSave = { nr -> graph.updTriggers { s -> s.copy(rules = s.rules + nr) }; adding = false }, onDelete = null)
     }
+    if (addingVoice) {
+        RuleDialog(TriggerRule(UUID.randomUUID().toString(), Trigger.VoiceCommand(phrase = "", engine = VoiceEngine.KEYWORD), RecAction.TOGGLE_RECORD), title = "New voice trigger", onDismiss = { addingVoice = false },
+            onSave = { nr -> graph.updTriggers { s -> s.copy(rules = s.rules + nr) }; addingVoice = false }, onDelete = null)
+    }
+    }
+}
+
+/** Lets the rule editor start keyword enrollment without threading the audio hub through every composable. */
+private class EnrollHandle(val hub: com.ultrax26.recorder.triggers.audio.AudioTriggerHub?)
+private val LocalEnroll = compositionLocalOf { EnrollHandle(null) }
+
+@Composable
+private fun VoiceEnrollRow(phrase: String) {
+    val handle = LocalEnroll.current
+    val hub = handle.hub
+    val hud = hub?.hud?.collectAsStateWithLifecycle()?.value
+    val cmd = phrase.trim().lowercase()
+    val count = hud?.enrolledCounts?.get(cmd) ?: 0
+    val listening = hud?.enrolling == cmd
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(when {
+            hub == null -> "Microphone not running — the trained engine needs the app in the foreground with microphone access."
+            cmd.isEmpty() -> "Type the phrase above, then record it."
+            listening -> "LISTENING — say “$cmd” now. Repeat 3–5 times, then tap Done."
+            else -> "$count recorded sample${if (count == 1) "" else "s"} of “$cmd”. Any word or sound works; the recorder learns your voice."
+        }, style = MaterialTheme.typography.bodySmall, color = if (listening) UxColors.Green else MaterialTheme.colorScheme.onSurfaceVariant)
+        Row {
+            if (!listening) Button(onClick = { hub?.beginEnrollment(cmd) }, enabled = hub != null && cmd.isNotEmpty() && hud?.enrolling == null) { Text(if (count == 0) "Record this voice trigger" else "Record another sample") }
+            else Button(onClick = { hub?.cancelEnrollment() }) { Text("Done") }
+            if (count > 0 && !listening) TextButton(onClick = { hub?.deleteCommand(cmd) }) { Text("Clear samples") }
+        }
+    }
 }
 
 private val TRIGGER_KINDS: List<Pair<String, () -> Trigger>> = listOf(
-    "Hand gesture" to { Trigger.HandGesture() }, "Finger count" to { Trigger.FingerCount() }, "Wave" to { Trigger.HandWave() }, "Hands up" to { Trigger.HandsUp() },
+    "Hand gesture" to { Trigger.HandGesture() }, "Pinch / unpinch" to { Trigger.Pinch() }, "Finger count" to { Trigger.FingerCount() }, "Wave" to { Trigger.HandWave() }, "Hands up" to { Trigger.HandsUp() },
     "Visual clap" to { Trigger.VisualClap() }, "Gesture sequence" to { Trigger.GestureSequence() },
     "Blink ×N" to { Trigger.Blink() }, "Wink" to { Trigger.Wink() }, "Smile" to { Trigger.Smile() }, "Mouth open" to { Trigger.MouthOpen() },
     "Head nod" to { Trigger.HeadNod() }, "Head shake" to { Trigger.HeadShake() }, "Head tilt" to { Trigger.HeadTilt() },
@@ -102,7 +144,7 @@ private val TRIGGER_KINDS: List<Pair<String, () -> Trigger>> = listOf(
 )
 
 private fun kindOf(t: Trigger): String = when (t) {
-    is Trigger.HandGesture -> "Hand gesture"; is Trigger.FingerCount -> "Finger count"; is Trigger.HandWave -> "Wave"; is Trigger.HandsUp -> "Hands up"
+    is Trigger.HandGesture -> "Hand gesture"; is Trigger.Pinch -> "Pinch / unpinch"; is Trigger.FingerCount -> "Finger count"; is Trigger.HandWave -> "Wave"; is Trigger.HandsUp -> "Hands up"
     is Trigger.VisualClap -> "Visual clap"; is Trigger.GestureSequence -> "Gesture sequence"; is Trigger.Blink -> "Blink ×N"; is Trigger.Wink -> "Wink"
     is Trigger.Smile -> "Smile"; is Trigger.MouthOpen -> "Mouth open"; is Trigger.HeadNod -> "Head nod"; is Trigger.HeadShake -> "Head shake"; is Trigger.HeadTilt -> "Head tilt"
     is Trigger.FaceAppears -> "Subject enters frame"; is Trigger.FaceDisappears -> "Subject leaves frame"; is Trigger.Clap -> "Clap ×N"; is Trigger.Snap -> "Finger snap ×N"
@@ -145,6 +187,10 @@ private fun TriggerEditor(t: Trigger, onChange: (Trigger) -> Unit) {
             SliderRow("Min classifier score", t.minScore, 0.3f..0.95f) { onChange(t.copy(minScore = it)) }
             PickerRow("Hand", listOf<Handedness?>(null, Handedness.LEFT, Handedness.RIGHT).map { it to (it?.name?.lowercase() ?: "either") }, t.hand) { onChange(t.copy(hand = it)) }
         }
+        is Trigger.Pinch -> {
+            PickerRow("Movement", PinchDirection.entries.map { it to it.label }, t.direction) { onChange(t.copy(direction = it)) }
+            Text("Thumb and index finger: spread them apart to zoom in, bring them together to zoom out. Each movement fires once (zoom step in Camera settings). For a live, continuous zoom hold the pinch for a moment, then open or close — enable it under Tuning ▸ Hands.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         is Trigger.FingerCount -> { IntSliderRow("Fingers", t.fingers, 1, 5) { onChange(t.copy(fingers = it)) }; IntSliderRow("Hold", (t.holdMs / 100).toInt(), 1, 30, suffix = "00 ms") { onChange(t.copy(holdMs = it * 100L)) } }
         is Trigger.HandWave -> IntSliderRow("Minimum swings", t.minSwings, 2, 8) { onChange(t.copy(minSwings = it)) }
         is Trigger.HandsUp -> IntSliderRow("Hold", (t.holdMs / 100).toInt(), 1, 30, suffix = "00 ms") { onChange(t.copy(holdMs = it * 100L)) }
@@ -172,6 +218,7 @@ private fun TriggerEditor(t: Trigger, onChange: (Trigger) -> Unit) {
             TextFieldRow("Phrase", t.phrase, { onChange(t.copy(phrase = it)) }, "For the trained engine this must equal an enrolled command name")
             TextFieldRow("Aliases (comma separated)", t.aliases.joinToString(", "), { onChange(t.copy(aliases = it.split(',').map { a -> a.trim() }.filter { a -> a.isNotEmpty() })) })
             PickerRow("Engine", VoiceEngine.entries.map { it to it.label }, t.engine) { onChange(t.copy(engine = it)) }
+            VoiceEnrollRow(t.phrase)
         }
         is Trigger.VolumeKeyPress -> { PickerRow("Key", VolumeKey.entries.map { it to it.name.lowercase() }, t.key) { onChange(t.copy(key = it)) }; SwitchRow("Long press", t.longPress) { onChange(t.copy(longPress = it)) } }
         is Trigger.BluetoothButton -> TextFieldRow("Key code (blank = any)", t.keyCode?.toString() ?: "", { onChange(t.copy(keyCode = it.trim().toIntOrNull())) }, "Press the button on the Monitor tab to see its code")
@@ -254,6 +301,9 @@ private fun TuningTab(graph: AppGraph, s: AppSettings) {
     SectionCard("Hands (MediaPipe)") {
         val h = t.hand
         fun upd(f: (HandGestureConfig) -> HandGestureConfig) = graph.updTriggers { it.copy(hand = f(it.hand)) }
+        SwitchRow("Pinch / unpinch zoom gestures", h.pinchZoom, "Thumb and index finger: spread = zoom in, close = zoom out (one zoom step per movement)") { upd { x -> x.copy(pinchZoom = it) } }
+        SwitchRow("Continuous pinch zoom", h.continuousPinchZoom, "Hold the pinch for a moment, then open or close the fingers to drive the zoom live", enabled = h.pinchZoom) { upd { x -> x.copy(continuousPinchZoom = it) } }
+        if (h.continuousPinchZoom) SliderRow("Pinch zoom gain", h.pinchZoomGain, 0.5f..3f, format = { "%.1f×".format(it) }) { upd { x -> x.copy(pinchZoomGain = it) } }
         SwitchRow("Hand gestures", h.enabled) { upd { x -> x.copy(enabled = it) } }
         PickerRow("Compute delegate", MlDelegate.entries.map { it to it.label }, h.delegate, "Restart the camera screen after changing") { upd { x -> x.copy(delegate = it) } }
         IntSliderRow("Max hands", h.maxHands, 1, 2) { upd { x -> x.copy(maxHands = it) } }
