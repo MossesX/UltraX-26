@@ -246,8 +246,8 @@ object Shaders {
             if (uSmooth > 0.0) {
                 vec3 high = c - blur; float detail = length(high);
                 float keep = smoothstep(0.02, 0.18, detail);   // keep strong edges
-                vec3 smooth = blur + high * mix(1.0 - uSmooth, 1.0, keep);
-                c = mix(c, smooth, skin);
+                vec3 smoothed = blur + high * mix(1.0 - uSmooth, 1.0, keep);
+                c = mix(c, smoothed, skin);
             }
             if (uBright > 0.0) c = mix(c, pow(c, vec3(1.0 - 0.35 * uBright)) * (1.0 + 0.1 * uBright), skin);
             if (uTeeth > 0.0) { float l = luma(c); vec3 white = mix(c, vec3(l) * 1.15 + 0.05, 0.8); c = mix(c, white, fm.a * uTeeth * smoothstep(0.35, 0.6, l)); }

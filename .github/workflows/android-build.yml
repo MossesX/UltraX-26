@@ -36,6 +36,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Validate GLSL shaders (a broken shader disables the whole effects pipeline on the phone)
+        run: |
+          set -euo pipefail
+          curl -sSL -o glslang.zip https://github.com/KhronosGroup/glslang/releases/download/master-tot/glslang-master-linux-Release.zip
+          unzip -qo glslang.zip -d glslang
+          python3 tools/check_shaders.py glslang/bin/glslangValidator
+
       - name: Unit tests
         run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
 

@@ -146,6 +146,8 @@ class RecordingController(
     }
 
     val pipelineActive: Boolean get() = renderer != null
+    /** Why the effects pipeline is not running (GL init / shader failure), for the Effects panel. */
+    val pipelineError = MutableStateFlow<String?>(null)
     /** Video-call actions routed from triggers (set by the app graph). */
     @Volatile var callActions: CallActions? = null
 
@@ -363,11 +365,14 @@ class RecordingController(
                 r.callRawCamera = !s.calls.effectsInCalls
                 dispatcher.effectsSink = r
                 renderer = r; rendererState.value = r; fxRenderer = r
+                pipelineError.value = null
             } catch (t: Throwable) {
                 UxLog.e(tag, "effects renderer failed; recording without effects", t)
-                notes += "Effects pipeline failed to start (${t.message}); recording without effects"
+                val why = (t.message ?: t.javaClass.simpleName).lines().take(3).joinToString(" ")
+                pipelineError.value = why
+                notes += "Effects pipeline failed to start ($why); recording without effects"
             }
-        }
+        } else if (!s.effects.needsPipeline() && !effectsPanelOpen) pipelineError.value = null
 
         // --- audio (shared capture owned by the app graph) ---
         var audioOk = false
