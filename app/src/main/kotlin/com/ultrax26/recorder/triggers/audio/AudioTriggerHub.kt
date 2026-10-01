@@ -26,6 +26,11 @@ data class AudioHudState(
     val enrolling: String? = null,
     val enrolledCounts: Map<String, Int> = emptyMap(),
     val muted: Boolean = false,
+    val enrollMs: Long = 0L,
+    val enrollLevelDbfs: Float = -120f,
+    val enrollMaxDbfs: Float = -120f,
+    val enrollError: String? = null,
+    val enrollSavedCommand: String? = null,
 )
 
 /**
@@ -90,8 +95,27 @@ class AudioTriggerHub(
         if (!queue.offer(chunk)) { queue.poll(); queue.offer(chunk) }
     }
 
-    fun beginEnrollment(command: String) { spotter.enrollingCommand = command; hud.value = hud.value.copy(enrolling = command) }
-    fun cancelEnrollment() { spotter.enrollingCommand = null; hud.value = hud.value.copy(enrolling = null) }
+    /** Called with true while a sample is being recorded (the app pauses the system recognizer meanwhile). */
+    var onEnrollmentActive: ((Boolean) -> Unit)? = null
+
+    /** Start recording one sample for [command]; finish with [finishEnrollment] or drop it with [cancelEnrollment]. */
+    fun beginEnrollment(command: String) {
+        spotter.beginManualEnrollment(command)
+        hud.value = hud.value.copy(enrolling = command, enrollMs = 0L, enrollLevelDbfs = -120f, enrollMaxDbfs = -120f, enrollError = null, enrollSavedCommand = null)
+        onEnrollmentActive?.invoke(true)
+    }
+
+    /** Stop and save the sample. Returns null on success, else the reason it was rejected. */
+    fun finishEnrollment(): String? {
+        val cmd = hud.value.enrolling
+        val err = spotter.finishManualEnrollment()
+        if (err == null) onTemplatesChanged?.invoke(spotter.templates)
+        hud.value = hud.value.copy(enrolling = null, enrolledCounts = counts(), enrollError = err, enrollSavedCommand = if (err == null) cmd else null)
+        onEnrollmentActive?.invoke(false)
+        return err
+    }
+
+    fun cancelEnrollment() { spotter.cancelManualEnrollment(); hud.value = hud.value.copy(enrolling = null); onEnrollmentActive?.invoke(false) }
     fun deleteCommand(command: String) { spotter.templates = spotter.templates.filter { it.command != command }; onTemplatesChanged?.invoke(spotter.templates); hud.value = hud.value.copy(enrolledCounts = counts()) }
     fun setTemplates(t: List<KeywordTemplate>) { spotter.templates = t; hud.value = hud.value.copy(enrolledCounts = counts()) }
     fun setKeywordSensitivity(s: Float, margin: Float) { spotter.sensitivity = s; spotter.relativeMargin = margin; hud.value = hud.value.copy(keywordThreshold = KeywordSpotter.thresholdFor(s)) }
@@ -112,7 +136,8 @@ class AudioTriggerHub(
                     clapBurst.tick(startMs + n * 1000L / sampleRate)
                     snapBurst.tick(startMs + n * 1000L / sampleRate)
                 }
-                if (keywordEnabled) spotter.process(mono, n, startMs)
+                if (keywordEnabled || spotter.manualCapture) spotter.process(mono, n, startMs)
+                if (spotter.manualCapture) hud.value = hud.value.copy(enrollMs = spotter.manualMs, enrollLevelDbfs = spotter.manualLevelDb, enrollMaxDbfs = spotter.manualMaxDb)
                 if (nowMs % 100 < 25) {
                     hud.value = hud.value.copy(levelDbfs = Dsp.dbfs(Dsp.rms(mono, n)), backgroundDbfs = clap.backgroundDb, whistleHz = whistle.currentFreq, speechActive = spotter.speechActive)
                 }

@@ -15,6 +15,7 @@ import com.ultrax26.recorder.camera.CameraInfo
 import com.ultrax26.recorder.camera.Capabilities
 import com.ultrax26.recorder.camera.SessionPlan
 import com.ultrax26.recorder.camera.ThermalMonitor
+import com.ultrax26.recorder.effects.cleared
 import com.ultrax26.recorder.effects.EffectsRenderer
 import com.ultrax26.recorder.feedback.Feedback
 import com.ultrax26.recorder.settings.AppSettings
@@ -491,7 +492,7 @@ class RecordingController(
             RecAction.ARM -> triggers.setArmed(true)
             RecAction.DISARM -> triggers.setArmed(false)
             RecAction.TOGGLE_ARM -> triggers.setArmed(!triggers.armed.value)
-            RecAction.CANCEL_COUNTDOWN -> cancelCountdown()
+            RecAction.CANCEL_COUNTDOWN -> { cancelCountdown(); delayedStart?.let { ctrl.handler.removeCallbacks(it); delayedStart = null; toast("Timer cancelled") } }
             RecAction.NEXT_LENS, RecAction.PREV_LENS -> {
                 val presets = currentInfo?.lensPresets ?: emptyList()
                 if (presets.isNotEmpty()) {
@@ -509,8 +510,119 @@ class RecordingController(
             RecAction.ANSWER_CALL -> callActions?.answer()
             RecAction.HANG_UP -> callActions?.hangUp()
             RecAction.TOGGLE_CALL_MIC -> callActions?.toggleMic()
+            else -> performParameterized(action, rule?.actionParam?.trim().orEmpty(), s)
         }
         if (rule != null) triggerLog += "${Clock.wallMs()} ${rule.displayName}"
+    }
+
+    private var delayedStart: Runnable? = null
+
+    /** Actions that carry an argument (see RecAction.paramHint). Settings changes rebuild the session as usual. */
+    private fun performParameterized(action: RecAction, p: String, s: AppSettings) {
+        fun upd(f: (AppSettings) -> AppSettings) = settingsStore.update(f)
+        val chars = engine.characteristics
+        when (action) {
+            RecAction.SET_RESOLUTION -> {
+                val m = Regex("(\\d{3,5})\\s*[x×]\\s*(\\d{3,5})").find(p)
+                if (m == null) { toast("Resolution needs WIDTHxHEIGHT"); return }
+                val w = m.groupValues[1].toInt(); val h = m.groupValues[2].toInt()
+                upd { it.copy(video = it.video.copy(width = w, height = h, highSpeed = false)) }; toast("Resolution ${w}×$h")
+            }
+            RecAction.SET_FPS -> p.toIntOrNull()?.let { f -> upd { it.copy(video = it.video.copy(fps = f)) }; toast("$f fps") } ?: toast("Frame rate needs a number")
+            RecAction.SET_CODEC -> runCatching { VideoCodec.valueOf(p.uppercase().replace("H.264", "AVC").replace("H.265", "HEVC")) }.getOrNull()?.let { c -> upd { it.copy(video = it.video.copy(codec = c, encoderName = null, profile = null)) }; toast(c.label) } ?: toast("Unknown codec $p")
+            RecAction.SET_HDR -> runCatching { HdrMode.valueOf(p.uppercase().replace("+", "_PLUS").replace(' ', '_')) }.getOrNull()?.let { h -> upd { it.copy(video = it.video.copy(hdr = h)) }; toast(h.label) } ?: toast("Unknown HDR mode $p")
+            RecAction.TOGGLE_HIGH_SPEED -> upd {
+                val on = !it.video.highSpeed
+                val hs = chars?.let { c -> Capabilities.highSpeedSizes(c) } ?: emptyList()
+                if (on && hs.isEmpty()) { toast("High-speed capture not supported"); it }
+                else if (on) { val sz = hs.first(); toast("High-speed on"); it.copy(video = it.video.copy(highSpeed = true, width = sz.width, height = sz.height, fps = 120)) }
+                else { toast("High-speed off"); it.copy(video = it.video.copy(highSpeed = false, fps = 30)) }
+            }
+            RecAction.SET_BITRATE -> p.toFloatOrNull()?.let { mb -> upd { it.copy(video = it.video.copy(bitrateMbps = if (mb <= 0f) null else mb)) }; toast(if (mb <= 0f) "Bitrate automatic" else "Bitrate ${mb.toInt()} Mb/s") }
+            RecAction.SELECT_CAMERA -> if (p.isNotBlank()) { upd { it.copy(capture = it.capture.copy(cameraId = p, lockedPhysicalCameraId = null, lensMode = com.ultrax26.recorder.settings.LensMode.AUTO, zoomRatio = 1f)) }; toast("Camera $p") }
+            RecAction.FRONT_CAMERA -> catalog.defaultFrontId()?.let { id -> upd { it.copy(capture = it.capture.copy(cameraId = id, lockedPhysicalCameraId = null, zoomRatio = 1f)) }; toast("Front camera") }
+            RecAction.BACK_CAMERA -> catalog.defaultBackId()?.let { id -> upd { it.copy(capture = it.capture.copy(cameraId = id, lockedPhysicalCameraId = null, zoomRatio = 1f)) }; toast("Back camera") }
+            RecAction.FLIP_CAMERA -> {
+                val front = currentInfo?.cameraInfo?.facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
+                val id = if (front) catalog.defaultBackId() else catalog.defaultFrontId()
+                if (id != null) { upd { it.copy(capture = it.capture.copy(cameraId = id, lockedPhysicalCameraId = null, zoomRatio = 1f)) }; toast(if (front) "Back camera" else "Front camera") }
+            }
+            RecAction.SET_ZOOM -> p.replace("x", "").replace("×", "").toFloatOrNull()?.let { z -> engine.setZoom(z, animate = true, rampPerSec = s.capture.zoomRampSpeed); toast("Zoom ${p}×") } ?: toast("Zoom needs a number")
+            RecAction.SET_EV -> {
+                val ev = p.replace("+", "").toFloatOrNull() ?: run { toast("EV needs a number"); return }
+                val step = chars?.let { Capabilities.evStep(it) } ?: 0f
+                val range = chars?.let { Capabilities.evRange(it) }
+                val steps = if (step > 0f) Math.round(ev / step) else 0
+                val clamped = if (range != null) steps.coerceIn(range.lower, range.upper) else steps
+                upd { it.copy(capture = it.capture.copy(exposureCompensation = clamped, manualExposure = false)) }; toast("Exposure ${if (ev >= 0) "+" else ""}$ev EV")
+            }
+            RecAction.AUTO_EXPOSURE -> { aeLocked = false; engine.lockAe(false); upd { it.copy(capture = it.capture.copy(manualExposure = false, exposureCompensation = 0, aeLock = false, iso = null, exposureTimeNs = null)) }; toast("Auto exposure") }
+            RecAction.SET_ISO -> p.toIntOrNull()?.let { iso -> upd { it.copy(capture = it.capture.copy(manualExposure = true, iso = iso)) }; toast("ISO $iso") } ?: toast("ISO needs a number")
+            RecAction.SET_SHUTTER -> p.removePrefix("1/").toFloatOrNull()?.takeIf { it > 0f }?.let { den -> val ns = (1e9 / den).toLong(); upd { it.copy(capture = it.capture.copy(manualExposure = true, exposureTimeNs = ns)) }; toast("Shutter 1/${den.toInt()} s") } ?: toast("Shutter needs 1/x")
+            RecAction.SET_WB -> {
+                val kelvin = when (p.lowercase()) { "daylight", "sun", "sunny" -> 5500; "cloudy" -> 6500; "shade" -> 7500; "tungsten", "incandescent" -> 3200; "fluorescent" -> 4200; "auto", "" -> null; else -> p.filter { it.isDigit() }.toIntOrNull() }
+                if (p.lowercase() in setOf("auto", "") || (kelvin == null)) { upd { it.copy(capture = it.capture.copy(manualWhiteBalance = false, awbMode = null, awbLock = false)) }; toast("Auto white balance") }
+                else { upd { it.copy(capture = it.capture.copy(manualWhiteBalance = true, whiteBalanceKelvin = kelvin.coerceIn(2000, 12000))) }; toast("White balance $kelvin K") }
+            }
+            RecAction.AUTO_FOCUS -> { afLocked = false; engine.lockAf(false); upd { it.copy(capture = it.capture.copy(manualFocus = false, afMode = null)) }; toast("Auto focus") }
+            RecAction.FOCUS_INFINITY -> { upd { it.copy(capture = it.capture.copy(manualFocus = true, focusDistance = 0f)) }; toast("Focus: infinity") }
+            RecAction.FOCUS_NEAREST -> { val near = currentInfo?.cameraInfo?.minFocusDistance?.takeIf { it > 0f } ?: 10f; upd { it.copy(capture = it.capture.copy(manualFocus = true, focusDistance = near)) }; toast("Focus: nearest") }
+            RecAction.RACK_FOCUS -> { engine.startFocusPull(s.capture.focusPullFrom, s.capture.focusPullTo, s.capture.focusPullDurationMs); toast("Rack focus") }
+            RecAction.TOGGLE_STABILIZATION -> upd { val on = it.capture.videoStabilization != 1; toast(if (on) "Stabilization on" else "Stabilization off"); it.copy(capture = it.capture.copy(videoStabilization = if (on) 1 else 0)) }
+            RecAction.SET_TONEMAP -> runCatching { com.ultrax26.recorder.settings.TonemapPreset.valueOf(p.uppercase()) }.getOrNull()?.let { t -> upd { it.copy(capture = it.capture.copy(tonemapPreset = t)) }; toast("Tone: ${t.label}") } ?: toast("Unknown tone preset $p")
+            RecAction.TOGGLE_OVERLAY -> upd {
+                val o = it.overlays
+                val n = when (p.lowercase().replace(" ", "")) {
+                    "grid" -> o.copy(grid = if (o.grid == com.ultrax26.recorder.settings.GridType.NONE) com.ultrax26.recorder.settings.GridType.THIRDS else com.ultrax26.recorder.settings.GridType.NONE)
+                    "level" -> o.copy(level = !o.level); "histogram" -> o.copy(histogram = !o.histogram); "waveform" -> o.copy(waveform = !o.waveform)
+                    "zebra", "zebras" -> o.copy(zebra = !o.zebra); "peaking", "focuspeaking" -> o.copy(focusPeaking = !o.focusPeaking); "falsecolor" -> o.copy(falseColor = !o.falseColor)
+                    "safeareas", "safe" -> o.copy(safeAreas = !o.safeAreas); "hud", "gesturehud" -> o.copy(gestureHud = !o.gestureHud); "audiometer" -> o.copy(audioMeter = !o.audioMeter)
+                    "timecode" -> o.copy(timecode = !o.timecode); "exposure", "exposureinfo" -> o.copy(exposureInfo = !o.exposureInfo); "center", "centermarker" -> o.copy(showCenterMarker = !o.showCenterMarker)
+                    else -> { toast("Unknown overlay $p"); o }
+                }
+                if (n !== o) toast("Overlay $p toggled")
+                it.copy(overlays = n)
+            }
+            RecAction.TOGGLE_AUDIO -> upd { toast(if (it.audio.enabled) "Audio off" else "Audio on"); it.copy(audio = it.audio.copy(enabled = !it.audio.enabled)) }
+            RecAction.TOGGLE_PREROLL -> upd { val on = it.video.preRollSeconds == 0; toast(if (on) "Pre-roll on (5 s)" else "Pre-roll off"); it.copy(video = it.video.copy(preRollSeconds = if (on) 5 else 0)) }
+            RecAction.TOGGLE_SCRUB -> upd { toast(if (it.audio.scrubTriggerSounds) "Trigger sounds kept" else "Trigger sounds removed"); it.copy(audio = it.audio.copy(scrubTriggerSounds = !it.audio.scrubTriggerSounds)) }
+            RecAction.SET_LOOK -> com.ultrax26.recorder.effects.EffectCatalog.look(p)?.let { look -> upd { it.copy(effects = look.apply(it.effects).copy(activeLook = look.id)) }; toast("Look: ${look.name}") } ?: toast("Unknown look $p")
+            RecAction.CLEAR_EFFECTS -> { upd { it.copy(effects = it.effects.cleared()) }; toast("Effects cleared") }
+            RecAction.SET_BACKGROUND -> upd {
+                val bg = it.effects.background
+                val next = when (p.lowercase()) {
+                    "none", "off", "real" -> bg.copy(type = com.ultrax26.recorder.effects.BackgroundType.NONE)
+                    "blur" -> bg.copy(type = com.ultrax26.recorder.effects.BackgroundType.BLUR)
+                    "color", "colour", "green" -> bg.copy(type = com.ultrax26.recorder.effects.BackgroundType.COLOR)
+                    else -> when {
+                        com.ultrax26.recorder.effects.EffectCatalog.parallaxScenes.any { sc -> sc.id == p } -> bg.copy(type = com.ultrax26.recorder.effects.BackgroundType.PARALLAX, id = p)
+                        com.ultrax26.recorder.effects.EffectCatalog.proceduralBackgrounds.any { sc -> sc.id == p } -> bg.copy(type = com.ultrax26.recorder.effects.BackgroundType.PROCEDURAL, id = p)
+                        else -> { toast("Unknown background $p"); bg }
+                    }
+                }
+                if (next !== bg) toast("Background: $p")
+                it.copy(effects = it.effects.copy(background = next))
+            }
+            RecAction.SET_FACE_MODE -> runCatching { com.ultrax26.recorder.effects.FaceMode.valueOf(p.uppercase().replace(' ', '_')) }.getOrNull()?.let { m -> upd { it.copy(effects = it.effects.copy(faceMode = m)) }; toast("Face: ${m.label}") } ?: toast("Unknown face mode $p")
+            RecAction.SET_FUN_MODE -> runCatching { com.ultrax26.recorder.effects.FunMode.valueOf(p.uppercase().replace(' ', '_')) }.getOrNull()?.let { m -> upd { it.copy(effects = it.effects.copy(funMode = m)) }; toast("Effect: ${m.label}") } ?: toast("Unknown fun mode $p")
+            RecAction.SET_AGE -> runCatching { com.ultrax26.recorder.effects.AgeMode.valueOf(p.uppercase().replace(' ', '_')) }.getOrNull()?.let { m -> upd { it.copy(effects = it.effects.copy(age = m)) }; toast("Age: ${m.label}") } ?: toast("Unknown age look $p")
+            RecAction.SET_COLOR_LOOK -> runCatching { com.ultrax26.recorder.effects.ColorLook.valueOf(p.uppercase().replace(' ', '_').replace("&", "")) }.getOrNull()?.let { m -> upd { it.copy(effects = it.effects.copy(look = m)) }; toast("Color: ${m.label}") } ?: toast("Unknown color look $p")
+            RecAction.TOGGLE_STICKER -> {
+                val asset = com.ultrax26.recorder.effects.EffectCatalog.sticker(p)
+                if (asset == null) { toast("Unknown sticker $p"); return }
+                upd { val has = it.effects.stickers.any { l -> l.assetId == p }; toast(if (has) "${asset.name} off" else asset.name); it.copy(effects = it.effects.copy(stickers = if (has) it.effects.stickers.filter { l -> l.assetId != p } else it.effects.stickers + asset.layer())) }
+            }
+            RecAction.TOGGLE_BEAUTY -> upd { val on = !it.effects.beauty.any(); toast(if (on) "Beauty on" else "Beauty off"); it.copy(effects = it.effects.copy(beauty = if (on) com.ultrax26.recorder.effects.BeautySettings(smoothing = 0.6f, brightening = 0.25f, eyeBrighten = 0.3f, teethWhitening = 0.3f) else com.ultrax26.recorder.effects.BeautySettings())) }
+            RecAction.START_TIMER -> {
+                val secs = p.toIntOrNull()?.coerceIn(1, 3600) ?: run { toast("Timer needs seconds"); return }
+                delayedStart?.let { ctrl.handler.removeCallbacks(it) }
+                val r = Runnable { delayedStart = null; if (state.value == RecState.IDLE) startInternal() }
+                delayedStart = r; ctrl.handler.postDelayed(r, secs * 1000L)
+                toast("Recording starts in $secs s")
+            }
+            RecAction.SET_COUNTDOWN -> p.toIntOrNull()?.let { n -> upd { it.copy(triggers = it.triggers.copy(countdownSeconds = n.coerceIn(0, 60))) }; toast(if (n == 0) "No countdown" else "Countdown $n s") }
+            else -> { }
+        }
     }
 
     @Volatile var torchOn = false

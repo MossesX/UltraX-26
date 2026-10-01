@@ -80,6 +80,53 @@ class KeywordSpotter(
 
     val commands: List<String> get() = templates.map { it.command }.distinct()
 
+    // ---- manual enrollment: the user taps Record, speaks, taps Stop & save. No VAD dependence. ----
+    @Volatile var manualCapture: Boolean = false
+        private set
+    private val manualFrames = ArrayList<FloatArray>()
+    private val manualEnergy = ArrayList<Float>()
+    @Volatile var manualMs: Long = 0L
+        private set
+    @Volatile var manualMaxDb: Float = -120f
+        private set
+    @Volatile var manualLevelDb: Float = -120f
+        private set
+
+    fun beginManualEnrollment(command: String) {
+        synchronized(manualFrames) { manualFrames.clear(); manualEnergy.clear() }
+        enrollingCommand = command; manualMs = 0L; manualMaxDb = -120f; manualLevelDb = -120f
+        manualCapture = true
+    }
+
+    fun cancelManualEnrollment() { manualCapture = false; enrollingCommand = null; synchronized(manualFrames) { manualFrames.clear(); manualEnergy.clear() } }
+
+    /**
+     * Stops the manual recording, trims silence around the spoken part and stores it as a template.
+     * Returns null on success, otherwise a message explaining what went wrong.
+     */
+    fun finishManualEnrollment(): String? {
+        manualCapture = false
+        val cmd = enrollingCommand ?: return "No command selected"
+        enrollingCommand = null
+        val frames: List<FloatArray>; val energy: List<Float>
+        synchronized(manualFrames) { frames = manualFrames.toList(); energy = manualEnergy.toList(); manualFrames.clear(); manualEnergy.clear() }
+        if (frames.isEmpty()) return "No audio was captured — is the microphone running?"
+        val maxDb = energy.max()
+        if (maxDb < -60f) return "Only silence reached the app (peak ${maxDb.toInt()} dBFS). Another app or the system speech recognizer may be holding the microphone — turn the system recognizer off under Voice ▸ Engines and try again."
+        val floor = maxOf(maxDb - 28f, -70f)
+        var first = energy.indexOfFirst { it > floor }
+        var last = energy.indexOfLast { it > floor }
+        if (first < 0 || last < first) return "Could not find the spoken part of the recording"
+        first = (first - 8).coerceAtLeast(0); last = (last + 8).coerceAtMost(frames.size - 1)
+        val seg = frames.subList(first, last + 1)
+        if (seg.size < 8) return "Too short — keep recording while you say the whole phrase"
+        if (seg.size > 800) return "Too long — keep one sample under 8 seconds"
+        templates = templates + KeywordTemplate(cmd, normalize(withDeltas(seg)))
+        val r = Result(cmd, 0f, 0f, frameTimeMs, seg.size * 10L, enrolled = true)
+        lastResult = r; onResult(r)
+        return null
+    }
+
     fun process(mono: FloatArray, n: Int, startMs: Long) {
         val m = if (inputSampleRate == 48000) Dsp.decimateBy3(mono, n, decim) else {
             // generic nearest-neighbour resample
@@ -106,6 +153,11 @@ class KeywordSpotter(
     private fun onFrame(x: FloatArray, nowMs: Long) {
         val energyDb = Dsp.dbfs(Dsp.rms(x, FRAME))
         val feat = mfcc(x, energyDb)
+        if (manualCapture) {
+            synchronized(manualFrames) { if (manualFrames.size < 1500) { manualFrames += feat; manualEnergy += energyDb; manualMs += 10 } }
+            manualLevelDb = energyDb; if (energyDb > manualMaxDb) manualMaxDb = energyDb
+            return
+        }
         if (!inSpeech) {
             noiseFloorDb = if (energyDb < noiseFloorDb) noiseFloorDb * 0.8f + energyDb * 0.2f else noiseFloorDb * 0.995f + energyDb * 0.005f
             preBuffer.addLast(feat); if (preBuffer.size > PRE_FRAMES) preBuffer.removeFirst()

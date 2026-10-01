@@ -152,6 +152,7 @@ class AppGraph(val app: Application) {
         audioHub?.let { old -> cap.removeListener(old); old.stop() }
         val hub = AudioTriggerHub(cap.config.sampleRate, s.triggers.audio, s.triggers.voice, keywordStore.load()) { e -> triggers.onEvent(e) }
         hub.onTemplatesChanged = { t -> keywordStore.save(t) }
+        hub.onEnrollmentActive = { active -> main.post { enrollmentActive = active; if (active) { speech?.stop(); speech = null; speechState.value = null } else applySpeech(settings.current) } }
         hub.suppressUntilMs = feedback.suppressAudioUntilMs
         hub.start()
         cap.addListener(hub)
@@ -170,8 +171,11 @@ class AppGraph(val app: Application) {
         } else { motion.stop(); mediaButtons.stop() }
     }
 
+    /** True while a voice sample is being recorded: the system recognizer is paused so it cannot take the microphone. */
+    @Volatile private var enrollmentActive = false
+
     private fun applySpeech(s: AppSettings) {
-        val want = foreground.value && s.triggers.voice.enabled && s.triggers.voice.systemRecognizer
+        val want = foreground.value && s.triggers.voice.enabled && s.triggers.voice.systemRecognizer && !enrollmentActive
         if (want && speech == null) {
             val r = SystemSpeechRecognizer(app, s.triggers.voice) { e -> triggers.onEvent(e) }
             speech = r; speechState.value = r; r.start()

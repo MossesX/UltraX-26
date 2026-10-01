@@ -24,7 +24,7 @@ fun TriggersScreen(graph: AppGraph, onBack: () -> Unit) {
     val settings by graph.settings.settings.collectAsStateWithLifecycle()
     val armed by graph.triggers.armed.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(0) }
-    val tabs = listOf("Rules", "Voice", "Tuning", "Monitor")
+    val tabs = listOf("Rules", "Commands", "Voice", "Tuning", "Monitor")
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         SettingsHeader("Gestures & voice", onBack) {
             FilterChip(selected = armed, onClick = { graph.triggers.setArmed(!armed) }, label = { Text(if (armed) "ARMED" else "Disarmed") },
@@ -34,8 +34,9 @@ fun TriggersScreen(graph: AppGraph, onBack: () -> Unit) {
         TabRow(selectedTabIndex = tab) { tabs.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) }) } }
         when (tab) {
             0 -> RulesTab(graph, settings.triggers)
-            1 -> Column(Modifier.verticalScroll(rememberScrollState())) { VoiceTab(graph, settings.triggers) }
-            2 -> Column(Modifier.verticalScroll(rememberScrollState())) { TuningTab(graph, settings) }
+            1 -> CommandsTab(graph, settings)
+            2 -> Column(Modifier.verticalScroll(rememberScrollState())) { VoiceTab(graph, settings.triggers) }
+            3 -> Column(Modifier.verticalScroll(rememberScrollState())) { TuningTab(graph, settings) }
             else -> MonitorTab(graph)
         }
     }
@@ -121,13 +122,162 @@ private fun VoiceEnrollRow(phrase: String) {
         Text(when {
             hub == null -> "Microphone not running — the trained engine needs the app in the foreground with microphone access."
             cmd.isEmpty() -> "Type the phrase above, then record it."
-            listening -> "LISTENING — say “$cmd” now. Repeat 3–5 times, then tap Done."
+            listening -> "RECORDING — say “$cmd” once, then tap Stop & save. Repeat for 3–5 samples."
             else -> "$count recorded sample${if (count == 1) "" else "s"} of “$cmd”. Any word or sound works; the recorder learns your voice."
         }, style = MaterialTheme.typography.bodySmall, color = if (listening) UxColors.Green else MaterialTheme.colorScheme.onSurfaceVariant)
+        if (listening && hud != null) RecordingMeter(hud)
+        hud?.enrollError?.let { if (!listening) Text(it, style = MaterialTheme.typography.bodySmall, color = UxColors.Amber) }
+        hud?.enrollSavedCommand?.let { if (!listening && it == cmd) Text("Sample saved ✓", style = MaterialTheme.typography.bodySmall, color = UxColors.Green) }
         Row {
             if (!listening) Button(onClick = { hub?.beginEnrollment(cmd) }, enabled = hub != null && cmd.isNotEmpty() && hud?.enrolling == null) { Text(if (count == 0) "Record this voice trigger" else "Record another sample") }
-            else Button(onClick = { hub?.cancelEnrollment() }) { Text("Done") }
+            else {
+                Button(onClick = { hub?.finishEnrollment() }, colors = ButtonDefaults.buttonColors(containerColor = UxColors.Green, contentColor = androidx.compose.ui.graphics.Color.Black)) { Text("Stop & save") }
+                Spacer(Modifier.width(6.dp))
+                TextButton(onClick = { hub?.cancelEnrollment() }) { Text("Cancel") }
+            }
             if (count > 0 && !listening) TextButton(onClick = { hub?.deleteCommand(cmd) }) { Text("Clear samples") }
+        }
+    }
+}
+
+/** Live input level + elapsed time while a voice sample is being recorded. */
+@Composable
+private fun RecordingMeter(hud: com.ultrax26.recorder.triggers.audio.AudioHudState) {
+    val level = ((hud.enrollLevelDbfs + 60f) / 60f).coerceIn(0f, 1f)
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        LinearProgressIndicator(progress = { level }, modifier = Modifier.fillMaxWidth().height(8.dp), color = if (hud.enrollLevelDbfs > -35f) UxColors.Green else UxColors.Amber)
+        Text("${"%.1f".format(hud.enrollMs / 1000f)} s · level ${hud.enrollLevelDbfs.toInt()} dBFS · peak ${hud.enrollMaxDbfs.toInt()} dBFS" + (if (hud.enrollMaxDbfs < -60f && hud.enrollMs > 1500) "  — nothing is being heard" else ""),
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Commands: everything the app can do, bindable to a voice phrase, gesture or sound; live-filtered
+// ------------------------------------------------------------------------------------------------
+
+@Composable
+private fun CommandsTab(graph: AppGraph, s: AppSettings) {
+    val cameraId = s.capture.cameraId ?: graph.catalog.defaultBackId()
+    var catalog by remember { mutableStateOf<List<CommandSpec>>(emptyList()) }
+    LaunchedEffect(cameraId, s.capture.probeHiddenCameraIds) {
+        catalog = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { buildCommandInput(graph, s, cameraId) }.map { CommandCatalog.build(it) }.getOrElse { CommandCatalog.build(CommandCatalogInput()) } }
+    }
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(query, catalog) { catalog.filter { it.matches(query) } }
+    val rules = s.triggers.rules
+    fun bindingsFor(c: CommandSpec): List<TriggerRule> = rules.filter { it.action == c.action && (c.param == null || it.actionParam?.trim().equals(c.param, ignoreCase = true)) }
+    var voiceFor by remember { mutableStateOf<CommandSpec?>(null) }
+    var gestureFor by remember { mutableStateOf<CommandSpec?>(null) }
+    val hub by graph.audioHubState.collectAsStateWithLifecycle()
+
+    Column(Modifier.fillMaxSize()) {
+        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), singleLine = true,
+            placeholder = { Text("Search ${catalog.size} commands… (resolution, zoom, camera, look, mute)") },
+            trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("Clear") } })
+        Text("${filtered.size} commands · tap Voice to record a phrase for one, Gesture to bind a hand or face signal", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            val grouped = filtered.groupBy { it.group }
+            for ((group, cmds) in grouped) {
+                item(key = "h-$group") { Text(group, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+                items(cmds, key = { it.id }) { c ->
+                    val bound = bindingsFor(c)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(c.title, style = MaterialTheme.typography.bodyMedium)
+                            if (bound.isNotEmpty()) Text(bound.joinToString(" · ") { it.trigger.label }, style = MaterialTheme.typography.labelSmall, color = UxColors.Green)
+                        }
+                        TextButton(onClick = { voiceFor = c }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(if (bound.any { it.trigger is Trigger.VoiceCommand }) "Voice ✓" else "Voice") }
+                        TextButton(onClick = { gestureFor = c }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(if (bound.any { it.trigger !is Trigger.VoiceCommand }) "Gesture ✓" else "Gesture") }
+                    }
+                }
+            }
+            if (filtered.isEmpty()) item { Text("Nothing matches “$query”.", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+    voiceFor?.let { c -> VoiceBindSheet(graph, c, hub, bindingsFor(c).firstOrNull { it.trigger is Trigger.VoiceCommand }) { voiceFor = null } }
+    gestureFor?.let { c ->
+        val existing = bindingsFor(c).firstOrNull { it.trigger !is Trigger.VoiceCommand }
+        RuleDialog(existing ?: TriggerRule(UUID.randomUUID().toString(), Trigger.HandGesture(), c.action, actionParam = c.param, onlyWhenArmed = false), title = c.title, onDismiss = { gestureFor = null },
+            onSave = { nr -> graph.updTriggers { t -> t.copy(rules = if (existing != null) t.rules.map { if (it.id == nr.id) nr else it } else t.rules + nr) }; gestureFor = null },
+            onDelete = if (existing != null) ({ graph.updTriggers { t -> t.copy(rules = t.rules.filter { it.id != existing.id }) }; gestureFor = null }) else null)
+    }
+}
+
+private fun buildCommandInput(graph: AppGraph, s: AppSettings, cameraId: String?): CommandCatalogInput {
+    val chars = cameraId?.let { runCatching { graph.catalog.characteristics(it) }.getOrNull() }
+    val infos = graph.catalog.allInfos(s.capture.probeHiddenCameraIds, s.capture.hiddenIdProbeMax)
+    val sizes = chars?.let { com.ultrax26.recorder.camera.Capabilities.videoSizes(it) } ?: emptyList()
+    val fps = chars?.let { c -> sizes.firstOrNull()?.let { com.ultrax26.recorder.camera.Capabilities.selectableFps(c, it) } } ?: listOf(24, 30, 60)
+    val presets = graph.controller.sessionInfo.value?.lensPresets ?: emptyList()
+    val maxZoom = infos.firstOrNull { it.id == cameraId }?.zoomRange?.upper ?: 10f
+    return CommandCatalogInput(
+        cameras = infos.map { it.id to it.shortName },
+        resolutions = sizes.map { it.width to it.height }.distinct(),
+        fpsOptions = (fps + listOf(24, 25, 30, 50, 60)).distinct().sorted(),
+        lensPresets = presets,
+        maxZoom = maxZoom,
+        codecs = com.ultrax26.recorder.recording.EncoderCapabilities.availableCodecs().map { it.name },
+        hdrModes = HdrMode.entries.map { it.name },
+        looks = com.ultrax26.recorder.effects.EffectCatalog.looks.map { it.id to it.name },
+        stickers = com.ultrax26.recorder.effects.EffectCatalog.stickers.map { it.id to it.name },
+        backgrounds = com.ultrax26.recorder.effects.EffectCatalog.parallaxScenes.map { it.id to it.name } + com.ultrax26.recorder.effects.EffectCatalog.proceduralBackgrounds.map { it.id to it.name },
+        faceModes = com.ultrax26.recorder.effects.FaceMode.entries.filter { it != com.ultrax26.recorder.effects.FaceMode.NONE }.map { it.name to it.label },
+        funModes = com.ultrax26.recorder.effects.FunMode.entries.filter { it != com.ultrax26.recorder.effects.FunMode.NONE }.map { it.name to it.label },
+        ageModes = com.ultrax26.recorder.effects.AgeMode.entries.filter { it != com.ultrax26.recorder.effects.AgeMode.NONE }.map { it.name to it.label },
+        colorLooks = com.ultrax26.recorder.effects.ColorLook.entries.filter { it != com.ultrax26.recorder.effects.ColorLook.NONE }.map { it.name to it.label },
+        tonePresets = TonemapPreset.entries.map { it.name to it.label },
+    )
+}
+
+/** Record a spoken phrase for one command (tap to record, tap to stop & save), then bind it as a rule. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VoiceBindSheet(graph: AppGraph, c: CommandSpec, hub: com.ultrax26.recorder.triggers.audio.AudioTriggerHub?, existing: TriggerRule?, onDismiss: () -> Unit) {
+    val hud = hub?.hud?.collectAsStateWithLifecycle()?.value
+    var phrase by remember { mutableStateOf((existing?.trigger as? Trigger.VoiceCommand)?.phrase ?: c.phrase) }
+    var alsoSystem by remember { mutableStateOf(((existing?.trigger as? Trigger.VoiceCommand)?.engine ?: VoiceEngine.BOTH) != VoiceEngine.KEYWORD) }
+    val cmd = phrase.trim().lowercase()
+    val count = hud?.enrolledCounts?.get(cmd) ?: 0
+    val recording = hud?.enrolling == cmd
+    ModalBottomSheet(onDismissRequest = { if (recording) hub?.cancelEnrollment(); onDismiss() }) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+            Text(c.title, style = MaterialTheme.typography.headlineSmall)
+            Text("${c.group} · ${c.action.label}${c.param?.let { " $it" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(phrase, { phrase = it }, Modifier.fillMaxWidth(), label = { Text("Spoken phrase") }, singleLine = true, enabled = !recording,
+                supportingText = { Text("Any word or sound. The trained recognizer matches your voice; samples are stored under this phrase.") })
+            Spacer(Modifier.height(10.dp))
+            if (hub == null) Text("Microphone not running — keep the app in the foreground with microphone access.", color = UxColors.Amber, style = MaterialTheme.typography.bodySmall)
+            Text(if (recording) "RECORDING — say “$cmd” once, then tap Stop & save" else "$count sample${if (count == 1) "" else "s"} recorded. Record 3–5 for reliable matching.",
+                style = MaterialTheme.typography.bodyMedium, color = if (recording) UxColors.Green else MaterialTheme.colorScheme.onSurface)
+            if (recording && hud != null) RecordingMeter(hud)
+            hud?.enrollError?.let { if (!recording) Text(it, style = MaterialTheme.typography.bodySmall, color = UxColors.Amber) }
+            hud?.enrollSavedCommand?.let { if (!recording && it == cmd) Text("Sample saved ✓", style = MaterialTheme.typography.bodySmall, color = UxColors.Green) }
+            Spacer(Modifier.height(8.dp))
+            Row {
+                if (!recording) Button(onClick = { hub?.beginEnrollment(cmd) }, enabled = hub != null && cmd.isNotEmpty() && hud?.enrolling == null, modifier = Modifier.weight(1f)) { Text(if (count == 0) "● Record sample" else "● Record another") }
+                else Button(onClick = { hub?.finishEnrollment() }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = UxColors.Green, contentColor = androidx.compose.ui.graphics.Color.Black)) { Text("■ Stop & save") }
+                Spacer(Modifier.width(8.dp))
+                if (recording) OutlinedButton(onClick = { hub?.cancelEnrollment() }) { Text("Cancel") }
+                else if (count > 0) OutlinedButton(onClick = { hub?.deleteCommand(cmd) }) { Text("Clear") }
+            }
+            Spacer(Modifier.height(8.dp))
+            SwitchRow("Also match with the system speech recognizer", alsoSystem, "Understands the words without training, but may pause while recording") { alsoSystem = it }
+            Spacer(Modifier.height(8.dp))
+            Row {
+                Button(onClick = {
+                    if (cmd.isEmpty()) return@Button
+                    val engine = if (alsoSystem) VoiceEngine.BOTH else VoiceEngine.KEYWORD
+                    val trig = Trigger.VoiceCommand(cmd, engine = engine)
+                    graph.updTriggers { t ->
+                        val rule = existing?.copy(trigger = trig, action = c.action, actionParam = c.param) ?: TriggerRule(UUID.randomUUID().toString(), trig, c.action, actionParam = c.param, onlyWhenArmed = false, cooldownMs = 1000)
+                        t.copy(rules = if (existing != null) t.rules.map { if (it.id == rule.id) rule else it } else t.rules + rule)
+                    }
+                    onDismiss()
+                }, enabled = cmd.isNotEmpty() && !recording, modifier = Modifier.weight(1f)) { Text(if (existing != null) "Save binding" else "Bind phrase to command") }
+                if (existing != null) { Spacer(Modifier.width(8.dp)); TextButton(onClick = { graph.updTriggers { t -> t.copy(rules = t.rules.filter { it.id != existing.id }) }; onDismiss() }) { Text("Remove", color = UxColors.Red) } }
+            }
+            Text("Binding creates a rule (Rules tab) that fires “${c.title}” when the phrase is heard, whether or not triggers are armed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -166,6 +316,7 @@ private fun RuleDialog(initial: TriggerRule, title: String, onDismiss: () -> Uni
                 TriggerEditor(rule.trigger) { rule = rule.copy(trigger = it) }
                 Sep()
                 PickerRow("Action", RecAction.entries.map { it to it.label }, rule.action) { rule = rule.copy(action = it) }
+                rule.action.paramHint?.let { hint -> TextFieldRow("Parameter", rule.actionParam ?: "", { rule = rule.copy(actionParam = it) }, hint) }
                 IntSliderRow("Cooldown", (rule.cooldownMs / 500).toInt(), 0, 20, suffix = " ×0.5 s") { rule = rule.copy(cooldownMs = it * 500L) }
                 SwitchRow("Only while armed", rule.onlyWhenArmed) { rule = rule.copy(onlyWhenArmed = it) }
                 val states = listOf(RecState.IDLE, RecState.COUNTDOWN, RecState.RECORDING, RecState.PAUSED)
@@ -253,7 +404,7 @@ private fun VoiceTab(graph: AppGraph, t: TriggerSettings) {
         SliderRow("Rejection margin", v.keywordMargin, 0f..0.4f, subtitle = "Second-best command must be this much worse (relative)") { upd { x -> x.copy(keywordMargin = it) } }
         SwitchRow("Countdown also applies to voice", t.countdownAppliesToVoice) { on -> graph.updTriggers { it.copy(countdownAppliesToVoice = on) } }
     }
-    SectionCard("Trained commands", "Say each phrase 3–5 times. The phrase must match the rule's phrase exactly.") {
+    SectionCard("Trained commands", "Tap Record, say the phrase once, tap Stop & save; repeat for 3–5 samples. The phrase must match the rule's phrase exactly. The Commands tab lists everything you can bind.") {
         if (hub == null) Text("Microphone not running — grant the microphone permission and keep the app in the foreground.", color = UxColors.Amber)
         val counts = hud?.enrolledCounts ?: emptyMap()
         val ruleCommands = t.rules.mapNotNull { (it.trigger as? Trigger.VoiceCommand)?.phrase?.trim()?.lowercase() }.distinct()
@@ -261,11 +412,13 @@ private fun VoiceTab(graph: AppGraph, t: TriggerSettings) {
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("“$cmd”")
-                    Text("${counts[cmd] ?: 0} sample${if ((counts[cmd] ?: 0) == 1) "" else "s"}${if (hud?.enrolling == cmd) " · LISTENING — say it now" else ""}", style = MaterialTheme.typography.bodySmall,
+                    Text("${counts[cmd] ?: 0} sample${if ((counts[cmd] ?: 0) == 1) "" else "s"}${if (hud?.enrolling == cmd) " · RECORDING — say it, then Stop & save" else ""}", style = MaterialTheme.typography.bodySmall,
                         color = if (hud?.enrolling == cmd) UxColors.Green else MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (hud?.enrolling == cmd) RecordingMeter(hud)
                 }
-                Button(onClick = { hub?.beginEnrollment(cmd) }, enabled = hub != null && hud?.enrolling == null) { Text("Record sample") }
-                if ((counts[cmd] ?: 0) > 0) TextButton(onClick = { hub?.deleteCommand(cmd) }) { Text("Clear") }
+                if (hud?.enrolling == cmd) Button(onClick = { hub?.finishEnrollment() }, colors = ButtonDefaults.buttonColors(containerColor = UxColors.Green, contentColor = androidx.compose.ui.graphics.Color.Black)) { Text("Stop & save") }
+                else Button(onClick = { hub?.beginEnrollment(cmd) }, enabled = hub != null && hud?.enrolling == null) { Text("Record") }
+                if ((counts[cmd] ?: 0) > 0 && hud?.enrolling != cmd) TextButton(onClick = { hub?.deleteCommand(cmd) }) { Text("Clear") }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -273,7 +426,8 @@ private fun VoiceTab(graph: AppGraph, t: TriggerSettings) {
             Spacer(Modifier.width(8.dp))
             Button(onClick = { val c = newCommand.trim().lowercase(); if (c.isNotEmpty()) { hub?.beginEnrollment(c); newCommand = "" } }, enabled = hub != null && newCommand.isNotBlank()) { Text("Enroll") }
         }
-        if (hud?.enrolling != null) TextButton(onClick = { hub?.cancelEnrollment() }) { Text("Cancel enrollment") }
+        if (hud?.enrolling != null) TextButton(onClick = { hub?.cancelEnrollment() }) { Text("Cancel recording") }
+        hud?.enrollError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = UxColors.Amber) }
         hud?.let { h ->
             Sep()
             KeyValue("Last heard", h.lastKeyword ?: "—")

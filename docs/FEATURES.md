@@ -58,7 +58,8 @@ pro strip). Anything else — including every **Samsung vendor tag** the HAL lis
 | Voice (trained keyword spotter) | MFCC + DTW on the recording's PCM | 🧪 enroll 3–5 samples/phrase |
 | Volume keys, Bluetooth buttons, shake, proximity wave, timer | platform | ✅ |
 | Pinch / unpinch (thumb–index) → zoom steps; continuous pinch zoom | landmark geometry | ✅ 🧪 |
-| Record your own voice triggers (any word or sound, trained in-app) | MFCC + DTW keyword spotter | ✅ |
+| Record your own voice triggers (any word or sound, trained in-app): tap to record, tap to stop & save, live meter, silence diagnosis | MFCC + DTW keyword spotter | ✅ |
+| Commands tab: several hundred bindable actions/settings (resolution, fps, codec, HDR, camera, zoom, exposure, focus, WB, overlays, effects, backgrounds, stickers, calls…) with live search | parameterized rules | ✅ |
 | Remove trigger sounds (claps, commands, beep) from the recording | delayed PCM scrubber | ✅ 🧪 |
 | 8K finder: scans hidden / physical cameras and high-resolution size sets | Camera2 | ✅ |
 

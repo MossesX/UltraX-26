@@ -122,3 +122,35 @@ A/V sync is preserved because timestamps are not changed; only the moment of wri
 - Pre-roll clips are covered as well: the clap that *started* a recording is in the pre-roll audio and is
   silenced the same way.
 - The removal is per fired rule; claps that do not match a rule stay in the recording.
+
+## The Commands tab: bind anything to a phrase or gesture
+
+**Gestures ▸ Commands** lists every action and setting the app can perform — several hundred entries:
+start/stop/pause, snapshot, markers, timers, arming; every camera the phone exposes (including hidden
+lens IDs), front/back/flip; zoom steps and "zoom to 0.6× / 1× / 3× / 5× / 10×…"; every resolution and
+frame rate the current camera advertises; codec, HDR mode, bitrate, high-speed; exposure (EV, ISO,
+shutter, AE lock, auto), focus (lock, infinity, nearest, rack focus), white balance presets and Kelvin
+values, tone presets; every overlay; audio on/off; every effect look, face mode, fun effect, age look,
+color look, background and sticker; pre-roll, trigger-sound removal; and call controls.
+
+- The **search bar** filters the list on every keystroke; each word must match somewhere in the title,
+  group, keywords or parameter ("zoom 5", "camera tele", "4k", "mute").
+- **Voice** opens the recorder for that command: a suggested phrase (editable), **● Record sample →
+  ■ Stop & save** with a live level meter, sample count, and a switch to also match the phrase with the
+  system speech recognizer. *Bind phrase to command* creates the rule.
+- **Gesture** opens the rule editor with the action and its parameter already filled in, so a thumbs-up,
+  blink, clap or any other trigger can drive it.
+
+Rules created here appear in the Rules tab like any other; parameterized actions show their argument
+("Set resolution 3840x2160"). You can also type the parameter by hand in the rule editor — every
+parameterized action lists the format it expects.
+
+### Recording a sample, step by step
+
+1. Tap **Record** (or **● Record sample**). The system speech recognizer is paused so it cannot take the
+   microphone, and the meter starts moving with your voice.
+2. Say the phrase once.
+3. Tap **Stop & save**. The recording is trimmed to the spoken part and stored. "Sample saved ✓" appears;
+   if it was rejected the reason is shown (too short, too long, or — the usual culprit — only silence
+   reached the app because something else holds the microphone).
+4. Repeat for 3–5 samples, ideally at different distances.

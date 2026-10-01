@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 /** What a rule does to the recorder when its trigger fires. */
 @Serializable
-enum class RecAction(val label: String) {
+enum class RecAction(val label: String, val paramHint: String? = null) {
     START("Start recording"),
     STOP("Stop recording"),
     PAUSE("Pause"),
@@ -28,6 +28,44 @@ enum class RecAction(val label: String) {
     ANSWER_CALL("Answer incoming video call"),
     HANG_UP("Hang up video call"),
     TOGGLE_CALL_MIC("Mute / unmute call microphone"),
+    // ---- parameterized actions (the parameter is the rule's actionParam) ----
+    SET_RESOLUTION("Set resolution", "width x height, e.g. 3840x2160"),
+    SET_FPS("Set frame rate", "fps, e.g. 60"),
+    SET_CODEC("Set codec", "AVC, HEVC, AV1 or APV"),
+    SET_HDR("Set HDR mode", "OFF, HLG10, HDR10, HDR10_PLUS or DOLBY_VISION"),
+    TOGGLE_HIGH_SPEED("High-speed capture on / off"),
+    SET_BITRATE("Set bitrate", "Mb/s, 0 = automatic"),
+    SELECT_CAMERA("Select camera", "camera id, e.g. 0 or 23"),
+    FRONT_CAMERA("Switch to the front camera"),
+    BACK_CAMERA("Switch to the back camera"),
+    FLIP_CAMERA("Flip front / back"),
+    SET_ZOOM("Zoom to ratio", "zoom ratio, e.g. 2 or 0.6"),
+    SET_EV("Exposure compensation", "EV, e.g. -1 or 0.5"),
+    AUTO_EXPOSURE("Auto exposure"),
+    SET_ISO("Manual ISO", "ISO, e.g. 800"),
+    SET_SHUTTER("Manual shutter", "1/x seconds — give x, e.g. 250"),
+    SET_WB("White balance", "auto, daylight, cloudy, shade, tungsten, fluorescent or Kelvin"),
+    AUTO_FOCUS("Auto focus"),
+    FOCUS_INFINITY("Focus to infinity"),
+    FOCUS_NEAREST("Focus to the nearest distance"),
+    RACK_FOCUS("Rack focus A → B"),
+    TOGGLE_STABILIZATION("Video stabilization on / off"),
+    SET_TONEMAP("Tone preset", "DEVICE, SRGB, REC709, LINEAR, LOG or CUSTOM"),
+    TOGGLE_OVERLAY("Overlay on / off", "grid, level, histogram, waveform, zebra, peaking, falsecolor, safeareas, hud, audiometer, timecode, exposure, center"),
+    TOGGLE_AUDIO("Audio recording on / off"),
+    TOGGLE_PREROLL("Pre-roll on / off"),
+    TOGGLE_SCRUB("Remove trigger sounds on / off"),
+    SET_LOOK("Apply an effect look", "look id, e.g. cop"),
+    CLEAR_EFFECTS("Clear all effects"),
+    SET_BACKGROUND("Set background", "none, blur, color, or a scene id"),
+    SET_FACE_MODE("Face mode", "NONE, ALIEN, ZOMBIE, ROBOT, …"),
+    SET_FUN_MODE("Fun distortion", "NONE, BIG_HEAD, FISHEYE, CARTOON, …"),
+    SET_AGE("Age look", "NONE, OLDER, MUCH_OLDER, YOUNGER, BABY"),
+    SET_COLOR_LOOK("Color look", "NONE, WARM, COOL, BW, SEPIA, …"),
+    TOGGLE_STICKER("Sticker on / off", "sticker id, e.g. mustache"),
+    TOGGLE_BEAUTY("Beauty on / off"),
+    START_TIMER("Start recording after a delay", "seconds, e.g. 10"),
+    SET_COUNTDOWN("Set the trigger countdown", "seconds, 0 = none"),
 }
 
 /** Recorder lifecycle states a rule may be restricted to. */
@@ -325,6 +363,9 @@ data class TriggerRule(
     /** If non-null the rule only applies while the recorder is in one of these states. */
     val states: List<RecState>? = null,
     val name: String = "",
+    /** Argument for parameterized actions (resolution, fps, camera id, zoom ratio, look id…). */
+    val actionParam: String? = null,
 ) {
-    val displayName: String get() = name.ifBlank { "${trigger.label} → ${action.label}" }
+    val actionLabel: String get() = action.label + (actionParam?.takeIf { it.isNotBlank() }?.let { " $it" } ?: "")
+    val displayName: String get() = name.ifBlank { "${trigger.label} → $actionLabel" }
 }

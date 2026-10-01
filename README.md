@@ -32,6 +32,9 @@ no app needed — with your filters and backgrounds applied to the call.
 
 - **Pinch zoom by hand**: spread thumb and index finger to zoom in, pinch to zoom out; optional live
   continuous zoom while holding the pinch.
+- **Commands tab**: every setting, function and action — set resolution, pick a camera, zoom to 5×,
+  change ISO, apply a look, mute audio… — in one searchable list, each bindable to a recorded voice
+  phrase or any gesture.
 - **Record your own voice triggers** — any word or sound, trained on your voice in the app — and
   **remove trigger sounds from recordings** (claps, commands, the confirmation beep are silenced before
   encoding, video untouched).
