@@ -28,7 +28,16 @@ object EffectsSelfTest {
             val size = try { context.assets.openFd(name).use { it.length } } catch (_: Throwable) { try { context.assets.open(name).use { it.available().toLong() } } catch (t: Throwable) { -1L } }
             sb.appendLine(if (size > 0) "asset $name: ${size / 1024} KB" else "asset $name: MISSING ($size)")
         }
-        // 2) a synthetic 480×640 upright-ish frame (gradient + a skin-toned ellipse) so detectors have something to chew on
+        // 2) the GL compositor itself: can the effects renderer start on this GPU?
+        try {
+            val t0 = System.nanoTime()
+            val r = com.ultrax26.recorder.effects.EffectsRenderer(context) { com.ultrax26.recorder.effects.EffectsSettings() }
+            r.start(1280, 720)
+            val st = r.stats.value
+            sb.appendLine(if (r.inputSurface != null) "GL renderer: OK in ${(System.nanoTime() - t0) / 1_000_000} ms — ${st.glInfo}" else "GL renderer: FAILED — ${st.error} (${st.glInfo})")
+            r.stop()
+        } catch (t: Throwable) { sb.appendLine("GL renderer: CRASHED — ${t.javaClass.simpleName}: ${t.message}") }
+        // 3) a synthetic 480×640 upright-ish frame (gradient + a skin-toned ellipse) so detectors have something to chew on
         val bmp = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val paint = Paint().apply { shader = LinearGradient(0f, 0f, 0f, 480f, Color.rgb(40, 60, 90), Color.rgb(200, 210, 220), Shader.TileMode.CLAMP) }

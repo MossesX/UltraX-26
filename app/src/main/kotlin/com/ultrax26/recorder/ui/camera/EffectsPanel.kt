@@ -53,6 +53,7 @@ fun EffectsPanel(graph: AppGraph, onClose: () -> Unit) {
     Column(Modifier.fillMaxWidth().background(UxColors.Panel, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)).padding(bottom = 8.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Effects", color = UxColors.Orange, style = MaterialTheme.typography.titleMedium)
+            Text(" b${com.ultrax26.recorder.BuildConfig.BUILD_NUMBER}", color = Color.White.copy(alpha = 0.4f), style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.width(10.dp))
             if (stats != null) Text("${stats.fps.roundToInt()} fps · ${"%.1f".format(stats.frameMs)} ms${if (stats.faceTracked) " · face" else ""}${if (stats.segTracked) " · person" else ""}${stats.error?.let { " · $it" } ?: ""}", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
             else if (fx.isActive()) Text("starting pipeline…", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)

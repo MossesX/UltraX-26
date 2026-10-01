@@ -541,7 +541,7 @@ private fun CallsTab(graph: AppGraph, s: AppSettings) {
 
 @Composable
 private fun AboutTab() {
-    SectionCard("UltraX 26", "Version ${BuildConfig.VERSION_NAME}") {
+    SectionCard("UltraX 26", "Version ${BuildConfig.VERSION_NAME} · build #${BuildConfig.BUILD_NUMBER} · ${BuildConfig.GIT_SHA} · ${BuildConfig.BUILD_TIME}") {
         Text("Pro video recorder for the Galaxy S26 Ultra with hands-free control: gestures (MediaPipe), face signals (ML Kit), claps / whistles / voice (built-in DSP and the system recognizer).", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(8.dp))
         Text("Built on Camera2, MediaCodec and Jetpack Compose. No cloud services; all detection runs on the phone.", style = MaterialTheme.typography.bodySmall)

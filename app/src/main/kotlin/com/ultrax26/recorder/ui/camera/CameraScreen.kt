@@ -70,6 +70,8 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
     val speech by graph.speechState.collectAsStateWithLifecycle()
     val speechStatus = speech?.status?.collectAsStateWithLifecycle()?.value
     val callState by graph.calls.state.collectAsStateWithLifecycle()
+    val fxRenderer by graph.controller.rendererState.collectAsStateWithLifecycle()
+    val fxError by graph.controller.pipelineError.collectAsStateWithLifecycle()
 
     DisposableEffect(Unit) { graph.setCameraScreenVisible(true); onDispose { graph.setCameraScreenVisible(false) } }
 
@@ -195,6 +197,8 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
                 }
                 if (speechStatus != null && speechStatus != "off") Chip("voice: $speechStatus", UxColors.Slate)
                 if (lastEvent.isNotBlank()) Chip(lastEvent, Color(0xFFCBD5E1))
+                if (fxRenderer != null) Chip("FX pipeline on", UxColors.Green)
+                else if (settings.effects.isActive()) Chip(if (fxError != null) "FX pipeline FAILED: ${fxError!!.take(90)}" else "FX pipeline off", UxColors.Red)
                 if (vision.analysisFps > 0f) Chip("vision ${vision.analysisFps.roundToInt()} fps · ${vision.inferenceMs.roundToInt()} ms", UxColors.Slate)
             }
             if (preRoll > 0f) Chip("pre-roll ${"%.1f".format(preRoll)}s", UxColors.Sky)

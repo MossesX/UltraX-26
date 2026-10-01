@@ -55,6 +55,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // Build stamp so a phone can tell which commit it is running (Settings ▸ About, Effects panel).
+        buildConfigField("String", "GIT_SHA", "\"${(System.getenv("GITHUB_SHA") ?: "local").take(7)}\"")
+        buildConfigField("String", "BUILD_TIME", "\"${System.getenv("BUILD_TIME") ?: "dev build"}\"")
+        buildConfigField("String", "BUILD_NUMBER", "\"${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }

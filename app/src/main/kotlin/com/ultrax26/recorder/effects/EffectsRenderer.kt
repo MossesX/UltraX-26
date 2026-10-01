@@ -23,7 +23,7 @@ import java.util.concurrent.CountDownLatch
 import kotlin.math.cos
 import kotlin.math.sin
 
-data class RendererStats(val fps: Float = 0f, val frameMs: Float = 0f, val faceTracked: Boolean = false, val segTracked: Boolean = false, val error: String? = null)
+data class RendererStats(val fps: Float = 0f, val frameMs: Float = 0f, val faceTracked: Boolean = false, val segTracked: Boolean = false, val error: String? = null, val glInfo: String? = null)
 
 /**
  * OpenGL ES compositor between the camera and the preview/encoder surfaces.
@@ -165,6 +165,9 @@ class EffectsRenderer(private val context: Context, private val settingsProvider
     // ------------------------------------------------------------------------------------------
 
     private fun setupGl() {
+        val info = "${GLES20.glGetString(GLES20.GL_RENDERER)} · ${GLES20.glGetString(GLES20.GL_VERSION)}"
+        stats.value = stats.value.copy(glInfo = info)
+        UxLog.i(tag, "GL: $info")
         quad = Quad()
         progExt = GlProgram(Shaders.VERTEX, Shaders.FRAG_EXTERNAL)
         progCopy = GlProgram(Shaders.VERTEX, Shaders.FRAG_COPY)

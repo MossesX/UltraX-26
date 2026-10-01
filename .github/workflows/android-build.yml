@@ -47,11 +47,15 @@ jobs:
         run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
 
       - name: Assemble debug APK
+        env:
+          BUILD_TIME: ${{ github.run_started_at }}
         run: ./gradlew --no-daemon --stacktrace assembleDebug
 
       # The minified build is a bonus; a shrinker problem must never block the installable debug APK.
       - name: Assemble release APK (minified)
         continue-on-error: true
+        env:
+          BUILD_TIME: ${{ github.run_started_at }}
         run: ./gradlew --no-daemon --stacktrace assembleRelease
 
       - name: Upload APKs
