@@ -147,6 +147,7 @@ class FrameDispatcher(
             handsAvailable = hd != null, facesAvailable = fd != null || (meshEnabled && fm != null), lastError = err ?: initError,
             meshTracked = meshResult != null,
             meshReady = fm != null, segReady = sg != null, poseReady = pd != null, segTracked = nowMs - lastSegOkMs < 1000, modelsLoading = modelsLoading,
+            pinchRatio = handInterpreter.currentPinchRatio, pinchSession = handInterpreter.pinchSessionActive,
         )
     }
 

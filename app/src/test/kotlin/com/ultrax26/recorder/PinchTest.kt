@@ -47,10 +47,25 @@ class PinchTest {
         val interp = HandGestureInterpreter(HandGestureConfig(pinchWindowMs = 300)) { e -> events += e }
         var t = 0L
         repeat(3) { interp.process(listOf(hand(0.2f)), t); t += 33 }
-        // linger in the middle zone for a second before opening
-        repeat(30) { interp.process(listOf(hand(0.6f)), t); t += 33 }
+        // open the fingers very gradually over a second: no fast change inside any 300 ms window
+        for (i in 1..30) { interp.process(listOf(hand(0.2f + i * 0.033f)), t); t += 33 }
         repeat(3) { interp.process(listOf(hand(1.2f)), t); t += 33 }
         assertTrue(events.filterIsInstance<TriggerEvent.Pinch>().isEmpty())
+    }
+
+    @Test fun `a clear spread from a half-open hand counts as an unpinch`() {
+        val events = ArrayList<TriggerEvent>()
+        val interp = HandGestureInterpreter(HandGestureConfig()) { e -> events += e }
+        var t = 0L
+        repeat(5) { interp.process(listOf(hand(0.5f)), t); t += 33 }     // never fully pinched
+        repeat(3) { interp.process(listOf(hand(1.0f)), t); t += 33 }     // quick spread of +0.5
+        val p = events.filterIsInstance<TriggerEvent.Pinch>()
+        assertEquals(1, p.size); assertEquals(PinchDirection.OUT, p[0].direction)
+        t += 400
+        repeat(3) { interp.process(listOf(hand(1.0f)), t); t += 33 }
+        repeat(3) { interp.process(listOf(hand(0.5f)), t); t += 33 }     // quick close of -0.5
+        val all = events.filterIsInstance<TriggerEvent.Pinch>()
+        assertEquals(2, all.size); assertEquals(PinchDirection.IN, all[1].direction)
     }
 
     @Test fun `continuous mode reports spread relative to the hold and suppresses discrete events`() {

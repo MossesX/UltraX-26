@@ -1,5 +1,6 @@
 package com.ultrax26.recorder.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,11 @@ fun TriggersScreen(graph: AppGraph, onBack: () -> Unit) {
     val armed by graph.triggers.armed.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(0) }
     val tabs = listOf("Rules", "Commands", "Voice", "Tuning", "Monitor")
+    val cameraIdForCatalog = settings.capture.cameraId ?: graph.catalog.defaultBackId()
+    val commands by produceState(initialValue = CommandCatalog.build(CommandCatalogInput()), cameraIdForCatalog, settings.capture.probeHiddenCameraIds) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CommandCatalog.build(buildCommandInput(graph, settings, cameraIdForCatalog)) }.getOrDefault(value) }
+    }
+    CompositionLocalProvider(LocalCommandCatalog provides commands) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         SettingsHeader("Gestures & voice", onBack) {
             FilterChip(selected = armed, onClick = { graph.triggers.setArmed(!armed) }, label = { Text(if (armed) "ARMED" else "Disarmed") },
@@ -40,6 +46,42 @@ fun TriggersScreen(graph: AppGraph, onBack: () -> Unit) {
             else -> MonitorTab(graph)
         }
     }
+    }
+}
+
+/** Every bindable command for this phone (built once per screen; see CommandCatalog). */
+private val LocalCommandCatalog = compositionLocalOf<List<CommandSpec>> { emptyList() }
+
+private fun TriggerRule.commandTitle(commands: List<CommandSpec>): String =
+    commands.firstOrNull { it.action == action && (it.param == null || it.param.equals(actionParam?.trim(), ignoreCase = true)) }?.title ?: actionLabel
+
+/** Searchable chooser over the whole command catalog (hundreds of entries), used by the rule editor. */
+@Composable
+private fun CommandPickerDialog(commands: List<CommandSpec>, onPick: (CommandSpec) -> Unit, onDismiss: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(query, commands) { commands.filter { it.matches(query) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("Choose what the trigger does") },
+        text = {
+            Column {
+                OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Search ${commands.size} commands…") },
+                    trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("Clear") } })
+                Text("${filtered.size} shown", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
+                    val grouped = filtered.groupBy { it.group }
+                    for ((group, cmds) in grouped) {
+                        item(key = "g-$group") { Text(group, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)) }
+                        items(cmds, key = { it.id }) { c ->
+                            Text(c.title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().clickable { onPick(c) }.padding(vertical = 7.dp))
+                        }
+                    }
+                    if (filtered.isEmpty()) item { Text("Nothing matches “$query”.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(8.dp)) }
+                }
+            }
+        },
+    )
 }
 
 private fun AppGraph.updTriggers(f: (TriggerSettings) -> TriggerSettings) = settings.update { it.copy(triggers = f(it.triggers)) }
@@ -157,12 +199,9 @@ private fun RecordingMeter(hud: com.ultrax26.recorder.triggers.audio.AudioHudSta
 
 @Composable
 private fun CommandsTab(graph: AppGraph, s: AppSettings) {
-    val cameraId = s.capture.cameraId ?: graph.catalog.defaultBackId()
-    var catalog by remember { mutableStateOf<List<CommandSpec>>(emptyList()) }
-    LaunchedEffect(cameraId, s.capture.probeHiddenCameraIds) {
-        catalog = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { buildCommandInput(graph, s, cameraId) }.map { CommandCatalog.build(it) }.getOrElse { CommandCatalog.build(CommandCatalogInput()) } }
-    }
+    val catalog = LocalCommandCatalog.current
     var query by remember { mutableStateOf("") }
+    var addingRule by remember { mutableStateOf(false) }
     val filtered = remember(query, catalog) { catalog.filter { it.matches(query) } }
     val rules = s.triggers.rules
     fun bindingsFor(c: CommandSpec): List<TriggerRule> = rules.filter { it.action == c.action && (c.param == null || it.actionParam?.trim().equals(c.param, ignoreCase = true)) }
@@ -174,7 +213,10 @@ private fun CommandsTab(graph: AppGraph, s: AppSettings) {
         OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), singleLine = true,
             placeholder = { Text("Search ${catalog.size} commands… (resolution, zoom, camera, look, mute)") },
             trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("Clear") } })
-        Text("${filtered.size} commands · tap Voice to record a phrase for one, Gesture to bind a hand or face signal", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${filtered.size} commands · Voice records a phrase for one, Gesture binds a hand/face signal, sound or button", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { addingRule = true }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("+ Add rule") }
+        }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
             val grouped = filtered.groupBy { it.group }
             for ((group, cmds) in grouped) {
@@ -194,6 +236,8 @@ private fun CommandsTab(graph: AppGraph, s: AppSettings) {
             if (filtered.isEmpty()) item { Text("Nothing matches “$query”.", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
+    if (addingRule) RuleDialog(TriggerRule(UUID.randomUUID().toString(), Trigger.HandGesture(), RecAction.START, onlyWhenArmed = false), title = "New rule", onDismiss = { addingRule = false },
+        onSave = { nr -> graph.updTriggers { t -> t.copy(rules = t.rules + nr) }; addingRule = false }, onDelete = null)
     voiceFor?.let { c -> VoiceBindSheet(graph, c, hub, bindingsFor(c).firstOrNull { it.trigger is Trigger.VoiceCommand }) { voiceFor = null } }
     gestureFor?.let { c ->
         val existing = bindingsFor(c).firstOrNull { it.trigger !is Trigger.VoiceCommand }
@@ -315,8 +359,22 @@ private fun RuleDialog(initial: TriggerRule, title: String, onDismiss: () -> Uni
                 PickerRow("Trigger", TRIGGER_KINDS.map { it.first to it.first }, kindOf(rule.trigger)) { k -> rule = rule.copy(trigger = TRIGGER_KINDS.first { it.first == k }.second()) }
                 TriggerEditor(rule.trigger) { rule = rule.copy(trigger = it) }
                 Sep()
-                PickerRow("Action", RecAction.entries.map { it to it.label }, rule.action) { rule = rule.copy(action = it) }
-                rule.action.paramHint?.let { hint -> TextFieldRow("Parameter", rule.actionParam ?: "", { rule = rule.copy(actionParam = it) }, hint) }
+                val commands = LocalCommandCatalog.current
+                var choosing by remember { mutableStateOf(false) }
+                var advanced by remember { mutableStateOf(false) }
+                Row(Modifier.fillMaxWidth().clickable { choosing = true }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Does", style = MaterialTheme.typography.bodyLarge)
+                        Text(rule.commandTitle(commands), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                    }
+                    TextButton(onClick = { choosing = true }) { Text("Choose…") }
+                }
+                if (choosing) CommandPickerDialog(commands, onPick = { c -> rule = rule.copy(action = c.action, actionParam = c.param); choosing = false }, onDismiss = { choosing = false })
+                TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide raw action" else "Raw action & parameter…") }
+                if (advanced) {
+                    PickerRow("Action", RecAction.entries.map { it to it.label }, rule.action) { rule = rule.copy(action = it) }
+                    rule.action.paramHint?.let { hint -> TextFieldRow("Parameter", rule.actionParam ?: "", { rule = rule.copy(actionParam = it) }, hint) }
+                }
                 IntSliderRow("Cooldown", (rule.cooldownMs / 500).toInt(), 0, 20, suffix = " ×0.5 s") { rule = rule.copy(cooldownMs = it * 500L) }
                 SwitchRow("Only while armed", rule.onlyWhenArmed) { rule = rule.copy(onlyWhenArmed = it) }
                 val states = listOf(RecState.IDLE, RecState.COUNTDOWN, RecState.RECORDING, RecState.PAUSED)

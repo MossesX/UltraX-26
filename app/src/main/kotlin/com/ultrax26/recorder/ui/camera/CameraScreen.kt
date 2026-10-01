@@ -197,6 +197,7 @@ fun CameraScreen(graph: AppGraph, nav: (Screen) -> Unit) {
                 }
                 if (speechStatus != null && speechStatus != "off") Chip("voice: $speechStatus", UxColors.Slate)
                 if (lastEvent.isNotBlank()) Chip(lastEvent, Color(0xFFCBD5E1))
+                if (!vision.pinchRatio.isNaN()) Chip("pinch ${"%.2f".format(vision.pinchRatio)}${if (vision.pinchSession) " · zooming" else ""}", UxColors.Sky)
                 if (fxRenderer != null) Chip("FX pipeline on", UxColors.Green)
                 else if (settings.effects.isActive()) Chip(if (fxError != null) "FX pipeline FAILED: ${fxError!!.take(90)}" else "FX pipeline off", UxColors.Red)
                 if (vision.analysisFps > 0f) Chip("vision ${vision.analysisFps.roundToInt()} fps · ${vision.inferenceMs.roundToInt()} ms", UxColors.Slate)

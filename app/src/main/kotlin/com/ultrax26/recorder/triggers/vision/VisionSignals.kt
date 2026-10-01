@@ -79,4 +79,6 @@ data class VisionHudState(
     val poseReady: Boolean = false,
     val segTracked: Boolean = false,
     val modelsLoading: Boolean = false,
+    val pinchRatio: Float = Float.NaN,
+    val pinchSession: Boolean = false,
 )

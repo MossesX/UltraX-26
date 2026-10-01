@@ -289,8 +289,9 @@ data class HandGestureConfig(
     val continuousPinchZoom: Boolean = false,// hold a pinch, then spread/close to drive the zoom ratio live
     val pinchZoomGain: Float = 1.5f,         // zoom = base × spread^gain
     val pinchCloseRatio: Float = 0.35f,      // tip distance / hand size below which fingers count as touching
-    val pinchOpenRatio: Float = 0.85f,       // above which they count as spread
-    val pinchWindowMs: Long = 700,           // max time for the close→open or open→close movement
+    val pinchOpenRatio: Float = 0.75f,       // above which they count as spread
+    val pinchDeltaRatio: Float = 0.4f,       // or: a change of this much within the window counts, wherever it starts
+    val pinchWindowMs: Long = 800,           // max time for the close→open or open→close movement
 )
 
 @Serializable

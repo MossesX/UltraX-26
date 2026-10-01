@@ -46,6 +46,10 @@ class HandGestureInterpreter(@Volatile var cfg: HandGestureConfig, private val s
     private var pinchZone = 0                 // -1 closed, 1 open, 0 in between / unknown
     private var lastOpenMs = -1L
     private var lastClosedMs = -1L
+    private var recentMin = Float.NaN         // smallest ratio seen recently (for relative "spread" detection)
+    private var recentMax = Float.NaN         // largest ratio seen recently (for relative "close" detection)
+    private var recentMinMs = -1L
+    private var recentMaxMs = -1L
     private var closedSinceMs = -1L
     private var pinchLastSeenMs = -1L
     private var lastPinchEventMs = -10000L
@@ -154,7 +158,7 @@ class HandGestureInterpreter(@Volatile var cfg: HandGestureConfig, private val s
         val h = hands.firstOrNull { it.landmarks.size >= 21 }
         if (h == null) {
             currentPinchRatio = Float.NaN
-            if (pinchLastSeenMs >= 0 && nowMs - pinchLastSeenMs > 600) { endSession(nowMs); pinchZone = 0; closedSinceMs = -1; pinchLastSeenMs = -1 }
+            if (pinchLastSeenMs >= 0 && nowMs - pinchLastSeenMs > 600) { endSession(nowMs); pinchZone = 0; closedSinceMs = -1; pinchLastSeenMs = -1; recentMin = Float.NaN; recentMax = Float.NaN }
             return
         }
         pinchLastSeenMs = nowMs
@@ -164,12 +168,26 @@ class HandGestureInterpreter(@Volatile var cfg: HandGestureConfig, private val s
         currentPinchRatio = r
         val zone = if (r < cfg.pinchCloseRatio) -1 else if (r > cfg.pinchOpenRatio) 1 else 0
         if (zone == -1) { if (closedSinceMs < 0) closedSinceMs = nowMs } else if (zone == 1) closedSinceMs = -1
+        // Track the recent extremes so a clear spread or close counts even when the fingers never reach
+        // the absolute zones (hand turned sideways, small hands, long lenses).
+        if (recentMin.isNaN() || r < recentMin || nowMs - recentMinMs > cfg.pinchWindowMs) { recentMin = r; recentMinMs = nowMs }
+        if (recentMax.isNaN() || r > recentMax || nowMs - recentMaxMs > cfg.pinchWindowMs) { recentMax = r; recentMaxMs = nowMs }
+        val discreteAllowed = !sessionActive && nowMs - lastPinchEventMs > 250
+        var fired: PinchDirection? = null
         if (zone != 0 && zone != pinchZone) {
             val from = pinchZone
             pinchZone = zone
-            val discreteAllowed = !sessionActive && nowMs - lastPinchEventMs > 400
-            if (zone == -1 && from != -1 && lastOpenMs >= 0 && nowMs - lastOpenMs <= cfg.pinchWindowMs && discreteAllowed) { lastPinchEventMs = nowMs; sink(TriggerEvent.Pinch(PinchDirection.IN, r, nowMs)) }
-            if (zone == 1 && from != 1 && lastClosedMs >= 0 && nowMs - lastClosedMs <= cfg.pinchWindowMs && discreteAllowed) { lastPinchEventMs = nowMs; sink(TriggerEvent.Pinch(PinchDirection.OUT, r, nowMs)) }
+            if (zone == -1 && from != -1 && lastOpenMs >= 0 && nowMs - lastOpenMs <= cfg.pinchWindowMs) fired = PinchDirection.IN
+            if (zone == 1 && from != 1 && lastClosedMs >= 0 && nowMs - lastClosedMs <= cfg.pinchWindowMs) fired = PinchDirection.OUT
+        }
+        if (fired == null && discreteAllowed) {
+            if (r - recentMin >= cfg.pinchDeltaRatio && nowMs - recentMinMs <= cfg.pinchWindowMs && r > cfg.pinchCloseRatio) { fired = PinchDirection.OUT; pinchZone = if (zone == 0) 1 else zone }
+            else if (recentMax - r >= cfg.pinchDeltaRatio && nowMs - recentMaxMs <= cfg.pinchWindowMs && r < cfg.pinchOpenRatio) { fired = PinchDirection.IN; pinchZone = if (zone == 0) -1 else zone }
+        }
+        if (fired != null && discreteAllowed) {
+            lastPinchEventMs = nowMs
+            recentMin = r; recentMinMs = nowMs; recentMax = r; recentMaxMs = nowMs   // next movement is measured from here
+            sink(TriggerEvent.Pinch(fired, r, nowMs))
         }
         if (zone == 1) lastOpenMs = nowMs
         if (zone == -1) lastClosedMs = nowMs
