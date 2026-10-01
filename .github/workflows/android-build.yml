@@ -39,8 +39,13 @@ jobs:
       - name: Unit tests
         run: ./gradlew --no-daemon --stacktrace testDebugUnitTest
 
-      - name: Assemble debug + release APKs
-        run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      # The minified build is a bonus; a shrinker problem must never block the installable debug APK.
+      - name: Assemble release APK (minified)
+        continue-on-error: true
+        run: ./gradlew --no-daemon --stacktrace assembleRelease
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4

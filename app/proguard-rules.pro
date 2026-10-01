@@ -23,3 +23,9 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# MediaPipe's AAR bundles AutoValue's shaded JavaPoet, which references the javax.lang.model
+# compiler API that does not exist on Android. The code path is never executed at runtime;
+# R8 only needs to be told not to fail the build over the missing classes.
+-dontwarn javax.lang.model.**
+-dontwarn autovalue.shaded.**
